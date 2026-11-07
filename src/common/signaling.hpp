@@ -1,23 +1,17 @@
-// MetaShare signaling protocol — TCP line-based, used to bootstrap a raw RTP
-// session (no SDP, no ICE). The streamer advertises its stream parameters, the
-// client replies with the UDP port it will listen on, and the streamer starts
-// pushing RTP. After that, signaling only carries the final BYE.
+// Metuxa application signaling carried only inside authenticated, pinned TLS.
+// The secure server consumes AUTH before this parser. Lines are newline-framed
+// ASCII, bounded to 4096 bytes; JSON bodies are compact and single-line.
 //
-// Wire format: newline-terminated ASCII lines. Bodies (HELLO/READY) are compact
-// JSON (no embedded newlines), so framing stays trivial and base64 is gone.
+//   HELLO <json>       server -> client: v5 stream params, media keys/capabilities
+//   READY {"port":N}   client -> server: receiving UDP port on the TLS peer's IP
+//   START              server -> client: media may begin
+//   INPUT <event>      client -> server: bounded input event; "r" releases all
+//   INPUT_STATE bool   server -> client: current input gate, true or false
+//   PING               client heartbeat, echoed by server with current state
+//   BYE                either side: close the authenticated session
 //
-//   HELLO <json>   server -> client: stream params
-//                  (codec, resolution, fps, SSRCs, payload types, clock rates)
-//   READY <json>   client -> server: {"port": <client UDP port>}
-//   START                       server -> client: RTP streaming begins
-//   INPUT <body>   client -> server: one remote-input event (pointer/keyboard;
-//                  body format in src/common/input_event.hpp). Optional —
-//                  servers without an input backend ignore these.
-//   BYE                         either side: clean shutdown
-//
-// One UDP port carries both video and audio, demultiplexed by SSRC.
-//
-// Discovery (UDP) still uses the binary structs from protocol.hpp.
+// Every UDP RTP/RTCP packet uses the authenticated secure_transport envelope.
+// Legacy plaintext clients are deliberately incompatible.
 
 #pragma once
 
@@ -27,12 +21,12 @@
 namespace metashare::signal {
 
 // Reserved TCP port for the signaling server.
-inline constexpr std::uint16_t kDefaultSignalingPort = 7778;
+inline constexpr std::uint16_t kDefaultSignalingPort = 7878;
 
 // One decoded signaling message. PING is a client->server keepalive so the
 // server can distinguish an idle-but-alive client from a vanished one (and
 // free the single per-monitor slot for reconnection).
-enum class Type { kHello, kReady, kStart, kBye, kPing, kInput };
+enum class Type { kHello, kReady, kStart, kBye, kPing, kInput, kInputState };
 
 struct Message {
     Type type;

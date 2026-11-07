@@ -80,6 +80,13 @@ AVPixelFormat conv_fmt_for(const char* name) {
 Encoder::~Encoder() { close(); }
 
 bool Encoder::open(const EncoderConfig& cfg, std::string& err) {
+    if(cfg.width<2 || cfg.height<2 || cfg.width>7680 || cfg.height>4320 ||
+       cfg.width%2 || cfg.height%2 || cfg.fps_num<1 || cfg.fps_den<1 ||
+       cfg.bitrate_kbps<1 || cfg.bitrate_kbps>100000 || cfg.keyint_seconds<1 || cfg.keyint_seconds>60){
+        err="Invalid encoder configuration"; return false;
+    }
+    close();
+    force_keyframe_=false; pending_bitrate_kbps_=0;
     cfg_ = cfg;
 
     for (const Candidate& c : build_candidates(cfg)) {
@@ -279,6 +286,8 @@ bool Encoder::reconfigure_bitrate(int kbps, std::string& err) {
 
 bool Encoder::encode(AVFrame* frame, std::int64_t pts_usec,
                      const PacketSink& sink, std::string& err) {
+    if(!ctx_ || !frame || !frame->data[0] || frame->width<=0 || frame->height<=0 ||
+       frame->width>16384 || frame->height>16384){err="Invalid input frame or closed encoder";return false;}
     // Apply a pending bitrate change at this frame boundary.
     const int want_kbps = pending_bitrate_kbps_.exchange(0);
     if (want_kbps > 0 && want_kbps != cfg_.bitrate_kbps) {
@@ -297,24 +306,22 @@ bool Encoder::encode(AVFrame* frame, std::int64_t pts_usec,
                                frame->width != cfg_.width ||
                                frame->height != cfg_.height;
     if (needs_convert) {
-        if (!sws_ || sws_src_fmt_ != frame->format) {
-            if (sws_) sws_freeContext(sws_);
-            sws_ = sws_getContext(frame->width, frame->height,
-                                  static_cast<AVPixelFormat>(frame->format),
-                                  cfg_.width, cfg_.height, conv_fmt_,
-                                  SWS_BILINEAR, nullptr, nullptr, nullptr);
-            if (!sws_) {
-                err = "sws_getContext failed";
-                return false;
-            }
-            sws_src_fmt_ = frame->format;
-        }
+        // A window/mode can resize without changing pixel format. Refresh
+        // every conversion so libswscale never keeps stale source dimensions.
+        sws_ = sws_getCachedContext(sws_, frame->width, frame->height,
+                                    static_cast<AVPixelFormat>(frame->format),
+                                    cfg_.width, cfg_.height, conv_fmt_,
+                                    SWS_BILINEAR, nullptr, nullptr, nullptr);
+        if (!sws_) { err="sws_getCachedContext failed"; return false; }
+        sws_src_fmt_ = frame->format;
         if (av_frame_make_writable(conv_) < 0) {
             err = "conv frame not writable";
             return false;
         }
-        sws_scale(sws_, frame->data, frame->linesize, 0, frame->height,
-                  conv_->data, conv_->linesize);
+        if(sws_scale(sws_, frame->data, frame->linesize, 0, frame->height,
+                     conv_->data, conv_->linesize)!=cfg_.height){
+            err="Incomplete frame conversion";return false;
+        }
         enc_in = conv_;
     }
 

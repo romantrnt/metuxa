@@ -1,17 +1,12 @@
-// Raw RTP server: accepts a TCP signaling connection (HELLO/READY/START/BYE),
-// then streams H.265/H.264 video + Opus audio as raw RTP over UDP to the
-// client's announced port. Replaces WebRtcServer — no libdatachannel, no SDP,
-// no ICE. One UDP port carries both media, demultiplexed by SSRC.
-//
-// One RtpServer per monitor pipeline. Same broadcast API surface as the old
-// WebRtcServer so main.cpp only swaps the type.
-//
-// NACK retransmission: a background thread reads RTCP NACKs from the UDP socket
-// and retransmits requested packets from a sliding-window buffer.
+// Pinned TLS signaling plus AES-256-GCM-authenticated RTP/RTCP over UDP.
+// Each monitor has one explicitly paired peer, independent directional media
+// keys, replay protection, bounded repair queues and safe disconnect cleanup.
+// RtpServer never supports unauthenticated/plaintext legacy sessions.
 
 #pragma once
 
 #include <atomic>
+#include <algorithm>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -50,6 +45,12 @@ class RtpServer {
 
     bool start(std::uint16_t signaling_port, std::string& err);
     void stop();
+    void set_security(std::shared_ptr<security::ServerCredentials> credentials) { signaling_.set_security(std::move(credentials)); }
+    void set_monitor_count(int count) { monitor_count_ = std::max(1, std::min(16, count)); }
+    void set_audio_enabled(bool enabled) { audio_enabled_ = enabled; }
+    void set_input_enabled(bool enabled) { input_enabled_ = enabled; }
+    std::function<void()> on_input_release;
+    std::function<void(bool)> on_client_state;
 
     // Human-readable id (the monitor index) used only to tag the 1 Hz stats
     // line, so per-monitor loss/retransmit rates are easy to compare in the
@@ -75,6 +76,7 @@ class RtpServer {
                          std::size_t size, std::int64_t pts_usec);
 
     int peer_count() const;
+    std::uint16_t bound_port() const { return signaling_.bound_port(); }
 
     // Optional host-wide pacer; when set, video sends (including
     // retransmissions) are throttled through it. Must outlive this server.
@@ -116,6 +118,14 @@ class RtpServer {
     void send_sender_report(std::uint32_t ssrc, std::uint64_t packets,
                             std::uint64_t octets, std::uint32_t last_rtp_ts);
 
+    // Caller holds peer_mu_ for session/key/counter consistency.
+    bool send_secure(const std::uint8_t* data, std::size_t size);
+    security::MediaCipher media_send_, media_receive_;
+    std::atomic<bool> audio_enabled_{false}, input_enabled_{false};
+    bool session_connected_ = false;
+    int monitor_count_ = 1;
+    std::chrono::steady_clock::time_point rtcp_window_{}, last_pli_{};
+    unsigned rtcp_count_ = 0;
     signal::Server signaling_;
     Pacer* pacer_ = nullptr;
     VideoFormat video_{};

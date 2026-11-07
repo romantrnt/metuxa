@@ -1,108 +1,61 @@
 package com.metashare.client;
 
-import android.view.MotionEvent;
+import android.os.Handler;
+import android.os.Looper;
+import java.util.function.Consumer;
 
-/**
- * Bridges {@link RemoteInputController} callbacks onto a {@link StreamSession}:
- * normalizes Android pointer actions into evdev button transitions and relays
- * keys/text (already keysym-converted) to the host. One per streamed screen;
- * the session is bound once the surface's StreamSession exists.
- */
+/** The only bridge from local input into a live, selected connection. */
 final class SessionInputForwarder implements RemoteInputController.Listener {
-
-    private static final int BTN_LEFT = 272;    // Linux evdev codes
-    private static final int BTN_RIGHT = 273;
-    private static final int BTN_MIDDLE = 274;
-
-    private volatile StreamSession session;
-
-    // Pointer-button state as MotionEvent.BUTTON_* bits. Touch/trigger contact
-    // carries no button bits, so a synthetic primary is held from ACTION_DOWN
-    // until ACTION_UP/CANCEL; real mice report bits and diff cleanly.
-    private int heldButtons;
-    private boolean syntheticPrimary;
-    private float scrollAccum;
-
-    void setSession(StreamSession session) {
-        this.session = session;
-    }
-
-    @Override
+    private StreamSession session;
+    private boolean connected, inputCapable, draining, announcingText;
+    private Consumer<String> status = message -> {};
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final KeyboardQueue keyboard = new KeyboardQueue();
+    private final Runnable pumpTask = this::pump;
+    private final InputState state = new InputState(new InputState.Sink() {
+        public void move(float x, float y) { if (ready()) session.sendPointerMove(x, y); }
+        public void button(int b, boolean down) { if (ready()) session.sendPointerButton(b, down); }
+        public void scroll(int v, int h) { if (ready()) session.sendScroll(v, h); }
+        public void key(int k, boolean down) { if (ready()) session.sendKey(k, down); }
+    });
+    private final KeyboardQueue.Sink keyboardSink = new KeyboardQueue.Sink() {
+        public void character(int codePoint) { state.tap(Keysyms.fromCodePoint(codePoint)); }
+        public void key(int keysym, boolean down) { state.key(keysym, down); }
+    };
+    void setStatusListener(Consumer<String> listener) { status = listener; }
+    void setSession(StreamSession next) { releaseAll(); session = next; connected = false; inputCapable = false; state.clearDisconnected(); }
+    void connected() { state.clearDisconnected(); connected = true; }
+    void disconnected() { cancelKeyboard(); connected = false; inputCapable = false; state.clearDisconnected(); }
+    void inputCapability(boolean enabled) { if (!enabled) releaseAll(); inputCapable = enabled; }
+    private boolean ready() { return session != null && connected && inputCapable; }
     public void onPointerInput(RemoteInputController.PointerEvent e) {
-        StreamSession s = session;
-        if (s == null) return;
-
-        switch (e.action) {
-            case MotionEvent.ACTION_DOWN:
-                if (e.buttons == 0) syntheticPrimary = true;
-                break;
-            case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_CANCEL:
-                syntheticPrimary = false;  // released via the diff below
-                break;
-            case MotionEvent.ACTION_SCROLL:
-                scrollAccum += e.verticalScroll;
-                int steps = (int) scrollAccum;
-                if (steps != 0) {
-                    scrollAccum -= steps;
-                    // Android: positive = wheel away from the user (scroll
-                    // up); the wire (libinput convention): positive = down.
-                    s.sendScroll(-steps, 0);
-                }
-                break;
-            default:
-                break;
-        }
-
-        // Position before buttons, so a click lands where the cursor is.
-        switch (e.action) {
-            case MotionEvent.ACTION_DOWN:
-            case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_MOVE:
-            case MotionEvent.ACTION_HOVER_ENTER:
-            case MotionEvent.ACTION_HOVER_MOVE:
-            case MotionEvent.ACTION_BUTTON_PRESS:
-            case MotionEvent.ACTION_BUTTON_RELEASE:
-                s.sendPointerMove(e.x, e.y);
-                break;
-            default:
-                break;
-        }
-
-        int now = e.buttons
-                | (syntheticPrimary ? MotionEvent.BUTTON_PRIMARY : 0);
-        int changed = now ^ heldButtons;
-        if (changed != 0) {
-            emit(s, changed, now, MotionEvent.BUTTON_PRIMARY, BTN_LEFT);
-            emit(s, changed, now, MotionEvent.BUTTON_SECONDARY, BTN_RIGHT);
-            emit(s, changed, now, MotionEvent.BUTTON_TERTIARY, BTN_MIDDLE);
-            heldButtons = now;
-        }
+        if (ready()) state.pointer(e.action, e.x, e.y, e.verticalScroll, e.horizontalScroll, e.buttons);
     }
-
-    private static void emit(StreamSession s, int changed, int now,
-                             int androidBit, int evdevButton) {
-        if ((changed & androidBit) != 0) {
-            s.sendPointerButton(evdevButton, (now & androidBit) != 0);
-        }
-    }
-
-    @Override
     public void onTextInput(String text) {
-        StreamSession s = session;
-        if (s == null) return;
-        for (int i = 0; i < text.length(); ) {
-            int cp = text.codePointAt(i);
-            int keysym = Keysyms.fromCodePoint(cp);
-            s.sendKey(keysym, true);
-            s.sendKey(keysym, false);
-            i += Character.charCount(cp);
-        }
+        if (!ready() || text == null) return;
+        if (!keyboard.text(text)) { status.accept("Text was not sent: at most 4096 pending characters. Wait for the current text or paste a smaller piece."); return; }
+        if (text.length() > 32) { announcingText = true; status.accept("Sending pasted text… Keep this window focused until it finishes."); }
+        if (!draining) pump();
     }
-
-    @Override
-    public void onKeyInput(int keysym, boolean pressed) {
-        StreamSession s = session;
-        if (s != null) s.sendKey(keysym, pressed);
+    public void onKeyInput(int keysym, boolean down) {
+        if (!ready()) return;
+        if (!draining && keyboard.size() == 0) { state.key(keysym, down); return; }
+        if (!keyboard.key(keysym, down)) { releaseAll(); status.accept("Keyboard queue full. Pending input cancelled; please try again."); }
     }
+    private void pump() {
+        if (!ready()) { cancelKeyboard(); return; }
+        draining = true;
+        // 160 characters/sec => at most 320 key transitions/sec, below the host
+        // flood limit and leaving headroom for pointer and normal physical keys.
+        keyboard.drain(4, keyboardSink);
+        if (keyboard.size() > 0) main.postDelayed(pumpTask, 25);
+        else { draining = false; if (announcingText) { announcingText = false; status.accept("Text sent."); } }
+    }
+    private void cancelKeyboard() {
+        main.removeCallbacks(pumpTask);
+        if (keyboard.size() > 0 && announcingText) status.accept("Pending text cancelled because this window lost focus or disconnected. Some text may already have arrived.");
+        keyboard.clear(); draining = announcingText = false;
+    }
+    public void releasePointer() { state.releasePointer(); }
+    public void releaseAll() { cancelKeyboard(); state.releaseAll(); if (ready()) session.releaseAllInput(); }
 }

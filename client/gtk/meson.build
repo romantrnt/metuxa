@@ -1,39 +1,21 @@
-# Modern GNOME/GTK4 frontend (control panel) for the MetaShare streamer.
-#
-# This is a launcher only: it spawns `metashare-streamer` as a subprocess with
-# the chosen settings and surfaces its stdout/stderr. It does not decode or
-# display the video — that stays with the Quest / SDL2 clients.
-
-gtkmm_dep = dependency('gtkmm-4.0', required : false)
-if not gtkmm_dep.found()
-  message('GTK4 frontend: disabled (gtkmm-4.0 not found)')
+# Native metuxa control panel. Never replaces the original MetaShare launcher.
+gtkmm_dep = dependency('gtkmm-4.0', version : '>=4.10', required : false)
+json_glib_dep = dependency('json-glib-1.0', required : false)
+if not gtkmm_dep.found() or not json_glib_dep.found()
+  message('metuxa control: disabled (gtkmm >=4.10 and json-glib are required)')
   subdir_done()
 endif
+control_sources = files('control_model.cpp', 'server_process.cpp')
+executable('metuxa-control', files('main.cpp', 'main_window.cpp') + control_sources,
+  dependencies : [gtkmm_dep, json_glib_dep], install : true)
+control_tests = executable('metuxa-control-tests', files('tests/control_tests.cpp') + control_sources,
+  include_directories : include_directories('.'), dependencies : [gtkmm_dep, json_glib_dep])
+test('metuxa-control', control_tests, timeout : 20)
+install_data('dev.metuxa.Control.desktop', install_dir : get_option('datadir') / 'applications')
+install_data('../../data/brand/metuxa-icon.svg',
+  install_dir : get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',
+  rename : 'dev.metuxa.Control.svg')
 
-executable('metashare-streamer-ui',
-  files(
-    'main.cpp',
-    'main_window.cpp',
-  ),
-  dependencies : [gtkmm_dep],
-  install : true)
-
-# GNOME desktop entry so the launcher shows up in the app grid.
-install_data(
-  'dev.metashare.StreamerUI.desktop',
-  install_dir : get_option('datadir') / 'applications')
-
-# App icon + mark, shipped as scalable named icons under the GNOME icon
-# theme. The app-id name (`dev.metashare.StreamerUI`) is what the desktop
-# entry's Icon= and Gtk::Image lookups resolve against. The wordmark logo is
-# deliberately not installed here: icon-theme entries must be square, and
-# flatpak's export validator rejects the 520x160 wordmark outright.
-icondir = get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps'
-install_data(
-  files('../../data/brand/metashare-icon.svg',
-        '../../data/brand/metashare-mark.svg'),
-  install_dir : icondir,
-  rename : [
-    'dev.metashare.StreamerUI.svg',
-    'dev.metashare.StreamerUI-mark.svg',
-  ])
+# Explicit isolated UI QA target. Not a default test: requires private Weston.
+executable('metuxa-ui-tests', files('tests/ui_tests.cpp', 'main_window.cpp') + control_sources,
+  include_directories : include_directories('.'), dependencies : [gtkmm_dep, json_glib_dep])

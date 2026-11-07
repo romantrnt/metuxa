@@ -15,14 +15,16 @@
 , libdrm
 , SDL2
 , gtkmm4
+, openssl
+, json-glib
 , gsettings-desktop-schemas
 , adwaita-icon-theme
 , hicolor-icon-theme
 }:
 
 stdenv.mkDerivation {
-  pname = "metashare";
-  version = "0.1.0";
+  pname = "metuxa";
+  version = "0.2.0";
 
   # Keep the source copy out of the store's way: drop .git and the various
   # local ./build* trees that would otherwise be pulled in wholesale.
@@ -32,7 +34,7 @@ stdenv.mkDerivation {
       let base = baseNameOf path;
       in !(type == "directory" && (base == "result"
         || lib.hasPrefix "build" base
-        || base == ".flatpak-builder"));
+        || base == ".flatpak-builder" || base == ".deps" || base == "dist" || base == "test-output"));
   };
 
   nativeBuildInputs = [
@@ -53,6 +55,8 @@ stdenv.mkDerivation {
     systemd            # provides libsystemd.pc that sdbus-c++ requires
     libdrm             # DMA-BUF frame import
     SDL2               # desktop test client window/render
+    openssl
+    json-glib
     gtkmm4             # GTK4 control panel (client/gtk)
     # Schemas/icon theme the wrapped GTK4 frontend expects at runtime.
     gsettings-desktop-schemas
@@ -63,7 +67,7 @@ stdenv.mkDerivation {
   # Real Wayland capture is the whole point of the app — require it.
   mesonFlags = [ "-Dportal=enabled" ];
 
-  # The GTK frontend spawns `metashare-streamer` via $PATH lookup. When
+  # The GTK frontend spawns `metuxa-server` via $PATH lookup. When
   # launched from a GNOME .desktop entry, $out/bin is *not* on PATH, so inject
   # it into the wrapper for every wrapped binary.
   preFixup = ''
@@ -72,9 +76,9 @@ stdenv.mkDerivation {
 
   meta = {
     description = "Stream a Wayland session to a Meta Quest 3 floating window";
-    homepage = "https://github.com/makemake/metashare";
+    homepage = "https://github.com/romantrnt/metuxa";
     license = lib.licenses.mit;
     platforms = lib.platforms.linux;
-    mainProgram = "metashare-streamer-ui";
+    mainProgram = "metuxa-control";
   };
 }

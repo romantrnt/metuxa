@@ -18,10 +18,11 @@ streamer_srcs = files(
   'rtp_server.cpp',
   'discovery.cpp',
   '../common/signaling.cpp',
+  '../common/secure_transport.cpp',
 )
 
 streamer_deps = [
-  threads_dep, avcodec_dep, avutil_dep, swscale_dep, swresample_dep,
+  threads_dep, avcodec_dep, avutil_dep, swscale_dep, swresample_dep, dependency('openssl'),
 ]
 
 streamer_args = []
@@ -90,7 +91,7 @@ else
   message('Audio capture: disabled (needs PipeWire via portal or mutter)')
 endif
 
-executable('metashare-streamer',
+executable('metuxa-server',
   streamer_srcs,
   include_directories : common_inc,
   dependencies : streamer_deps,

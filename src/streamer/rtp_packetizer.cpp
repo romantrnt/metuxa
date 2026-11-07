@@ -29,7 +29,6 @@ namespace {
 // (a valid H.265 NAL header is 2 octets).
 template <typename F>
 void for_each_nal(const std::uint8_t* data, std::size_t size, F&& on_nal) {
-    std::size_t i = 0;
     const std::size_t n = size;
     // Find the first start code.
     auto find_start = [&](std::size_t from) -> std::size_t {

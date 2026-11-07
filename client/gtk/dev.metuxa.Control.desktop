@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=metuxa
+GenericName=Private VR desktop
+Comment=Share your Linux desktop with your headset, with pairing and explicit control
+Exec=metuxa-control
+Icon=dev.metuxa.Control
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=metuxa;streaming;screencast;vr;quest;wayland;
+StartupNotify=true
+StartupWMClass=dev.metuxa.Control

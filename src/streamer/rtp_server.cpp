@@ -10,6 +10,8 @@
 
 #include <chrono>
 #include <string>
+#include <sstream>
+#include <stdexcept>
 #include <vector>
 
 namespace metashare {
@@ -22,39 +24,18 @@ std::uint32_t next_ssrc() {
     return counter.fetch_add(0x100, std::memory_order_relaxed);
 }
 
-bool send_all_tcp(int fd, const void* data, std::size_t len) {
-    auto* p = static_cast<const char*>(data);
-    std::size_t off = 0;
-    while (off < len) {
-        ssize_t n = ::send(fd, p + off, len - off, MSG_NOSIGNAL);
-        if (n <= 0) {
-            if (n < 0 && errno == EINTR) continue;
-            return false;
-        }
-        off += static_cast<std::size_t>(n);
-    }
-    return true;
-}
-
-// Parse a tiny JSON value: {"port": <number>} or {"port":<number>}. Returns
-// false on any deviation — we control both ends, so strictness is fine.
+// READY is intentionally one small, strict JSON object, not a general parser.
 bool parse_ready_port(const std::string& body, std::uint16_t& port_out) {
-    auto key = body.find("\"port\"");
-    if (key == std::string::npos) return false;
-    auto colon = body.find(':', key);
-    if (colon == std::string::npos) return false;
-    std::size_t i = colon + 1;
-    while (i < body.size() &&
-           (body[i] == ' ' || body[i] == '\t' || body[i] == '\n'))
-        ++i;
-    if (i >= body.size() || body[i] < '0' || body[i] > '9') return false;
-    unsigned long v = 0;
-    while (i < body.size() && body[i] >= '0' && body[i] <= '9') {
-        v = v * 10 + static_cast<unsigned long>(body[i] - '0');
-        ++i;
+    if (body.size() < 10 || body.size() > 24 || body.compare(0,8,"{\"port\":") != 0 || body.back() != '}') return false;
+    std::size_t i=8; unsigned value=0;
+    if (body[i]<'1' || body[i]>'9') return false;
+    for (;i+1<body.size();++i) {
+        if (body[i]<'0' || body[i]>'9') return false;
+        value=value*10+static_cast<unsigned>(body[i]-'0');
+        if(value>65535) return false;
     }
-    if (v == 0 || v > 65535) return false;
-    port_out = static_cast<std::uint16_t>(v);
+    if (!value) return false;
+    port_out=static_cast<std::uint16_t>(value);
     return true;
 }
 
@@ -85,7 +66,7 @@ bool RtpServer::start(std::uint16_t signaling_port, std::string& err) {
             signaling_port,
             [this](const sockaddr_in& peer) { on_connect(peer); },
             [this](const signal::Message& m) { on_message(m); }, err)) {
-        running_ = false;
+        stop();
         return false;
     }
     std::fprintf(stderr, "[rtp] signaling on tcp/%u, video ssrc=%u\n",
@@ -144,13 +125,19 @@ void RtpServer::set_pacing_bitrate(int kbps) {
 }
 
 void RtpServer::on_disconnect() {
+    bool was_connected;
     {
         std::lock_guard<std::mutex> lk(peer_mu_);
+        was_connected = session_connected_;
+        session_connected_ = false;
         peer_streaming_ = false;
         peer_udp_ = {};
+        media_send_.clear(); media_receive_.clear();
         if (pacer_) pacer_->set_stream_rate(id_, 0);
     }
     reset_video_queue();
+    if (was_connected && on_input_release) on_input_release();
+    if (was_connected && on_client_state) on_client_state(false);
 }
 
 int RtpServer::peer_count() const {
@@ -159,12 +146,15 @@ int RtpServer::peer_count() const {
 }
 
 void RtpServer::on_connect(const sockaddr_in& peer) {
-    // Remember the client's TCP peer address; the UDP port arrives in READY.
     {
         std::lock_guard<std::mutex> lk(peer_mu_);
         peer_udp_ = peer;
-        peer_udp_.sin_port = 0;  // unknown until READY
+        peer_udp_.sin_port = 0;
         peer_streaming_ = false;
+        session_connected_ = true;
+        if (!media_send_.generate(security::MediaCipher::kServer) ||
+            !media_receive_.generate(security::MediaCipher::kClient))
+            throw std::runtime_error("Unable to create session keys");
     }
     reset_video_queue();
     send_hello();
@@ -172,33 +162,49 @@ void RtpServer::on_connect(const sockaddr_in& peer) {
 
 void RtpServer::send_hello() {
     const char* codec = (video_.codec == proto::Codec::kH265) ? "h265" : "h264";
-    char buf[512];
-    int n = std::snprintf(
-        buf, sizeof(buf),
-        "{\"video\":{\"codec\":\"%s\",\"width\":%d,\"height\":%d,\"fps\":%d,"
-        "\"pt\":%u,\"ssrc\":%u,\"clock\":%u},"
-        "\"audio\":{\"codec\":\"opus\",\"rate\":%d,\"channels\":%d,"
-        "\"pt\":%u,\"ssrc\":%u,\"clock\":%u}}",
-        codec, video_.width, video_.height, video_.fps_num,
-        static_cast<unsigned>(rtp::kVideoPayloadType), video_ssrc_,
-        rtp::kVideoClockRate, audio_rate_, audio_channels_,
-        static_cast<unsigned>(rtp::kOpusPayloadType), audio_ssrc_,
-        rtp::kOpusClockRate);
-    if (n <= 0) return;
-    signal::Message hello{signal::Type::kHello, std::string(buf, buf + n)};
-    if (!signaling_.send(hello))
-        std::fprintf(stderr, "[rtp] failed to send HELLO\n");
+    sockaddr_in local{}; socklen_t size=sizeof(local);
+    if (::getsockname(udp_fd_,reinterpret_cast<sockaddr*>(&local),&size)!=0)
+        throw std::runtime_error("Unable to describe media socket");
+    std::ostringstream body;
+    {
+        std::lock_guard<std::mutex> lk(peer_mu_);
+        body << "{\"version\":5,\"monitor_count\":" << monitor_count_ << ",\"input\":" << (input_enabled_ && on_input ? "true":"false")
+             << ",\"udp_port\":" << ntohs(local.sin_port)
+             << ",\"security\":{\"version\":1,\"cipher\":\"AES-256-GCM\",\"s2c_key\":\"" << media_send_.key_hex()
+             << "\",\"s2c_prefix\":\"" << media_send_.prefix_hex()
+             << "\",\"c2s_key\":\"" << media_receive_.key_hex()
+             << "\",\"c2s_prefix\":\"" << media_receive_.prefix_hex() << "\"},"
+             << "\"video\":{\"codec\":\"" << codec << "\",\"width\":" << video_.width
+             << ",\"height\":" << video_.height << ",\"fps\":" << video_.fps_num
+             << ",\"pt\":" << unsigned(rtp::kVideoPayloadType) << ",\"ssrc\":" << video_ssrc_
+             << ",\"clock\":" << rtp::kVideoClockRate << "}";
+        if (audio_enabled_ && id_ == 0)
+            body << ",\"audio\":{\"codec\":\"opus\",\"rate\":" << audio_rate_
+                 << ",\"channels\":" << audio_channels_ << ",\"pt\":" << unsigned(rtp::kOpusPayloadType)
+                 << ",\"ssrc\":" << audio_ssrc_ << ",\"clock\":" << rtp::kOpusClockRate << "}";
+        body << "}";
+    }
+    if(!signaling_.send({signal::Type::kHello,body.str()})) throw std::runtime_error("HELLO failed");
+}
+
+bool RtpServer::send_secure(const std::uint8_t* data, std::size_t size) {
+    if (!peer_streaming_) return false;
+    std::vector<std::uint8_t> sealed;
+    if (!media_send_.seal(data,size,sealed)) return false;
+    return ::sendto(udp_fd_,sealed.data(),sealed.size(),MSG_DONTWAIT,
+                    reinterpret_cast<sockaddr*>(&peer_udp_),sizeof(peer_udp_)) == static_cast<ssize_t>(sealed.size());
 }
 
 void RtpServer::on_message(const signal::Message& m) {
     if (m.type == signal::Type::kReady) {
         std::uint16_t port = 0;
         if (!parse_ready_port(m.body, port)) {
-            std::fprintf(stderr, "[rtp] malformed READY: %s\n", m.body.c_str());
-            return;
+            std::fprintf(stderr, "[rtp] malformed READY\n");
+            throw std::runtime_error("Invalid READY");
         }
         {
             std::lock_guard<std::mutex> lk(peer_mu_);
+            if (peer_streaming_) throw std::runtime_error("Duplicate READY");
             if (peer_udp_.sin_family != AF_INET ||
                 peer_udp_.sin_addr.s_addr == 0) {
                 std::fprintf(stderr, "[rtp] READY before connect\n");
@@ -215,13 +221,24 @@ void RtpServer::on_message(const signal::Message& m) {
         }
         std::fprintf(stderr, "[rtp] client ready -> udp %s:%u\n", ip, port);
         if (!signaling_.send({signal::Type::kStart, ""}))
-            std::fprintf(stderr, "[rtp] failed to send START\n");
+            throw std::runtime_error("START failed");
+        if (!signaling_.send({signal::Type::kInputState, input_enabled_ && on_input ? "true" : "false"}))
+            throw std::runtime_error("Input capability update failed");
+        if (on_client_state) on_client_state(true);
         if (on_keyframe_request) on_keyframe_request();
     } else if (m.type == signal::Type::kInput) {
-        if (on_input) {
+        bool ready;
+        { std::lock_guard lk(peer_mu_); ready=peer_streaming_; }
+        if (!ready) throw std::runtime_error("INPUT before READY");
+        if (m.body == "r") { if (on_input_release) on_input_release(); return; }
+        if (input_enabled_ && on_input) {
             input::Event e;
             if (input::parse(m.body, e)) on_input(e);
         }
+    } else if (m.type == signal::Type::kPing) {
+        if (!signaling_.send({signal::Type::kPing, ""}) ||
+            !signaling_.send({signal::Type::kInputState, input_enabled_ && on_input ? "true" : "false"}))
+            throw std::runtime_error("Heartbeat failed");
     } else if (m.type == signal::Type::kBye) {
         on_disconnect();
         std::fprintf(stderr, "[rtp] client bye\n");
@@ -307,11 +324,7 @@ void RtpServer::sender_loop() {
                     break;
                 if (paced &&
                     std::chrono::steady_clock::now() < frame.deadline) {
-                    sent =
-                        ::sendto(udp_fd_, pkt.data(), pkt.size(), MSG_DONTWAIT,
-                                 reinterpret_cast<sockaddr*>(&peer_udp_),
-                                 sizeof(peer_udp_)) ==
-                        static_cast<ssize_t>(pkt.size());
+                    sent = send_secure(pkt.data(), pkt.size());
                 }
                 if (!sent) {
                     // A partial access unit invalidates every dependent frame.
@@ -357,9 +370,7 @@ void RtpServer::send_repairs() {
             std::chrono::steady_clock::now() >= repair.deadline)
             continue;
         const auto& p = repair.packet;
-        if (::sendto(udp_fd_, p.data(), p.size(), MSG_DONTWAIT,
-                     reinterpret_cast<sockaddr*>(&peer_udp_),
-                     sizeof(peer_udp_)) == static_cast<ssize_t>(p.size()) &&
+        if (send_secure(p.data(), p.size()) &&
             repair.video) {
             video_retx_count_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -370,13 +381,11 @@ void RtpServer::broadcast_audio(std::uint32_t /*channel_id*/,
                                 const std::uint8_t* data, std::size_t size,
                                 std::int64_t pts_usec) {
     std::lock_guard<std::mutex> lk(peer_mu_);
-    if (!peer_streaming_) return;
+    if (!peer_streaming_ || !audio_enabled_ || id_ != 0) return;
     std::vector<rtp::Packet> packets;
     audio_packer_->packetize(data, size, pts_usec, packets);
     for (auto& pkt : packets) {
-        if (::sendto(udp_fd_, pkt.data(), pkt.size(), MSG_DONTWAIT,
-                     reinterpret_cast<sockaddr*>(&peer_udp_),
-                     sizeof(peer_udp_)) != static_cast<ssize_t>(pkt.size()))
+        if (!send_secure(pkt.data(), pkt.size()))
             continue;
         audio_retx_.record(rtp::seq_of(pkt), pkt);
         audio_pkts_.fetch_add(1, std::memory_order_relaxed);
@@ -422,8 +431,9 @@ void RtpServer::nack_loop() {
             if (streaming) {
                 send_sender_report(video_ssrc_, video_pkts_.load(),
                                    video_octets_.load(), video_last_ts_.load());
-                send_sender_report(audio_ssrc_, audio_pkts_.load(),
-                                   audio_octets_.load(), audio_last_ts_.load());
+                if (audio_enabled_ && id_ == 0)
+                    send_sender_report(audio_ssrc_, audio_pkts_.load(),
+                                       audio_octets_.load(), audio_last_ts_.load());
                 // Per-monitor throughput/health, so monitor 0 (physical) and
                 // the virtual monitors can be compared at a glance. High retx
                 // or loss on the virtual line => the flicker is packet loss on
@@ -465,13 +475,19 @@ void RtpServer::nack_loop() {
 
 void RtpServer::handle_rtcp(const std::uint8_t* data, std::size_t size,
                             const sockaddr_in& from) {
+    std::vector<std::uint8_t> plain;
     {
         std::lock_guard<std::mutex> lk(peer_mu_);
-        if (!peer_streaming_ ||
+        if (!peer_streaming_ || from.sin_family != AF_INET ||
             from.sin_addr.s_addr != peer_udp_.sin_addr.s_addr ||
             from.sin_port != peer_udp_.sin_port)
             return;
+        const auto now = std::chrono::steady_clock::now();
+        if (now-rtcp_window_ >= std::chrono::seconds(1)) { rtcp_window_=now; rtcp_count_=0; }
+        if (++rtcp_count_ > 200 || !media_receive_.open(data,size,plain)) return;
     }
+    auto now = std::chrono::steady_clock::now();
+    data=plain.data(); size=plain.size();
     // Minimal RTCP feedback parser (RFC 4585). We service NACK (RTPFB, PT=205,
     // FMT=1) and PLI (PSFB, PT=206, FMT=1).
     if (size < 8) return;
@@ -483,9 +499,13 @@ void RtpServer::handle_rtcp(const std::uint8_t* data, std::size_t size,
         (static_cast<std::uint16_t>(data[2]) << 8) | data[3];
     const std::size_t pkt_len =
         static_cast<std::size_t>(len16 + 1) * 4;  // 32-bit words
-    if (pkt_len > size || pkt_len < 8) return;
+    if (pkt_len != size || pkt_len < 8 || (b0 & 0x20)) return;
 
     if (pt == 206 && fmt == 1) {
+        if (pkt_len != 12) return;
+        const std::uint32_t media_ssrc = (std::uint32_t(data[8]) << 24) | (std::uint32_t(data[9]) << 16) | (std::uint32_t(data[10]) << 8) | data[11];
+        if (media_ssrc != video_ssrc_ || now-last_pli_ < std::chrono::milliseconds(250)) return;
+        last_pli_=now;
         // PLI — Picture Loss Indication. Force a keyframe on the next frame.
         if (on_keyframe_request) {
             std::fprintf(stderr, "[rtp] PLI received — requesting keyframe\n");
@@ -542,6 +562,7 @@ void RtpServer::handle_rtcp(const std::uint8_t* data, std::size_t size,
         // Receiver Report. Scan the report blocks for our video SSRC and
         // surface fraction-lost to the bitrate controller.
         const std::uint8_t rc = b0 & 0x1F;
+        if (pkt_len != 8 + std::size_t(rc) * 24) return;
         std::size_t off = 8;  // header + reporter SSRC
         for (std::uint8_t i = 0; i < rc && off + 24 <= pkt_len;
              ++i, off += 24) {
@@ -561,12 +582,8 @@ void RtpServer::handle_rtcp(const std::uint8_t* data, std::size_t size,
 void RtpServer::send_sender_report(std::uint32_t ssrc, std::uint64_t packets,
                                    std::uint64_t octets,
                                    std::uint32_t last_rtp_ts) {
-    sockaddr_in dst{};
-    {
-        std::lock_guard<std::mutex> lk(peer_mu_);
-        if (!peer_streaming_) return;
-        dst = peer_udp_;
-    }
+    std::lock_guard<std::mutex> lk(peer_mu_);
+    if (!peer_streaming_) return;
     // NTP timestamp (wall clock since 1900 epoch).
     auto now = std::chrono::system_clock::now().time_since_epoch();
     auto secs = std::chrono::duration_cast<std::chrono::seconds>(now).count();
@@ -594,8 +611,7 @@ void RtpServer::send_sender_report(std::uint32_t ssrc, std::uint64_t packets,
     put32(16, last_rtp_ts);
     put32(20, static_cast<std::uint32_t>(packets));
     put32(24, static_cast<std::uint32_t>(octets));
-    ::sendto(udp_fd_, sr, sizeof(sr), 0, reinterpret_cast<sockaddr*>(&dst),
-             sizeof(dst));
+    send_secure(sr, sizeof(sr));
 }
 
 }  // namespace metashare

@@ -1,5 +1,5 @@
-project('metashare', 'cpp',
-  version : '0.1.0',
+project('metuxa', 'cpp',
+  version : '0.2.0',
   default_options : [
     'cpp_std=c++20',
     'warning_level=2',
@@ -19,3 +19,5 @@ common_inc = include_directories('src/common')
 subdir('src/streamer')
 subdir('client/desktop_test')
 subdir('client/gtk')
+
+subdir('tests')

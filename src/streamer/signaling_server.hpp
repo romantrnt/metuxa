@@ -1,10 +1,4 @@
-// TCP signaling server: accepts one connection per client, notifies on
-// connect (so the owner can send the initial HELLO), reads newline-framed
-// signaling messages, dispatches them via a callback. Send is direct via
-// send_message(). Each client connection runs on its own thread.
-//
-// This is intentionally minimal — no auth, no TLS, no multiplexing. LAN-only.
-
+// TLS-only, pinned server identity and explicit per-run pairing authentication.
 #pragma once
 
 #include <atomic>
@@ -18,6 +12,7 @@
 #include <netinet/in.h>
 
 #include "signaling.hpp"
+#include "secure_transport.hpp"
 
 namespace metashare::signal {
 
@@ -25,7 +20,7 @@ class Server {
   public:
     using OnMessage = std::function<void(const Message&)>;
     using OnDisconnect = std::function<void()>;
-    // Fired once per accepted client, right before the read loop starts.
+    // Fired only after TLS and pairing authentication, before application reads.
     // peer holds the client's TCP source address (so the owner can target the
     // same host for UDP media).
     using OnConnect = std::function<void(const sockaddr_in& peer)>;
@@ -43,11 +38,13 @@ class Server {
     bool start(std::uint16_t port, OnConnect on_connect, OnMessage on_message,
                std::string& err);
     void stop();
+    void set_security(std::shared_ptr<security::ServerCredentials> credentials) { credentials_ = std::move(credentials); }
+    std::uint16_t bound_port() const { return bound_port_; }
 
-    // True if a client is currently connected.
+    // True only after TLS and pairing authentication.
     bool has_client() const;
 
-    // Called once after every client read loop, including EOF and timeout.
+    // Called once after each authenticated session, including EOF and timeout.
     OnDisconnect on_disconnect;
 
     // Send a message to the connected client. Returns false if no client
@@ -58,6 +55,12 @@ class Server {
     void client_loop(int fd, const sockaddr_in& peer,
                      const OnConnect& on_connect, const OnMessage& on_message);
 
+    bool read_line(int fd, std::string& line, std::string& pending, int timeout_ms);
+    bool write_line_locked(const std::string& line);
+    std::shared_ptr<security::ServerCredentials> credentials_;
+    SSL* tls_ = nullptr; // protected by send_mu_
+    std::atomic<bool> authenticated_{false};
+    std::uint16_t bound_port_ = 0;
     int listen_fd_ = -1;
     std::atomic<bool> running_{false};
     std::thread accept_thread_;

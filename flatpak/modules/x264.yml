@@ -8,11 +8,11 @@ name: x264
 buildsystem: simple
 build-commands:
   - ./configure --prefix=/app --enable-shared --disable-cli --enable-pic
-  - make -j$(nproc)
+  - make -j${FLATPAK_BUILDER_N_JOBS:-2}
   - make install
 sources:
   - type: git
     url: https://code.videolan.org/videolan/x264.git
     # x264 cuts no version tags; the long-lived `stable` branch is the project's
-    # recommended pin point.
-    branch: stable
+    # upstream branch; pin the verified local build commit for reproducibility.
+    commit: b35605ace3ddf7c1a5d67a2eb553f034aef41d55

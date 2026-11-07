@@ -23,6 +23,8 @@ extern "C" {
 #include <libavutil/frame.h>
 }
 
+#include "app_support.hpp"
+#include "secure_transport.hpp"
 #include "discovery.hpp"
 #include "encoder.hpp"
 #include "frame_source.hpp"
@@ -55,14 +57,21 @@ extern "C" {
 using namespace metashare;
 
 namespace {
+// Lock-free atomics may be used in a signal handler and are also safe across
+// capture, audio and main threads. volatile sig_atomic_t alone is not.
+static_assert(std::atomic<bool>::is_always_lock_free);
 std::atomic<bool> g_stop{false};
-void on_signal(int) { g_stop = true; }
+std::atomic<bool> g_input_gate{true};
+std::atomic<bool> g_failed{false};
+void on_signal(int sig) {
+    if (sig == SIGUSR1) g_input_gate = 0;
+    else if (sig == SIGUSR2) g_input_gate = 1;
+    else g_stop = 1;
+}
 
 struct Options {
     std::string source =
-#ifdef METASHARE_HAVE_MUTTER
-        "mutter";
-#elif defined(METASHARE_HAVE_PORTAL)
+#if defined(METASHARE_HAVE_PORTAL)
         "portal";
 #else
         "test";
@@ -84,14 +93,16 @@ struct Options {
     // Comma-separated list of audio channels to stream. "none" disables audio
     // entirely; recognised names are "system" (desktop output loopback),
     // "mic" (host microphone), "test" (synthetic 440 Hz tone). Defaults to
-    // "system,mic" when audio is built in and the source is real (i.e. not
+    // "system" when audio is built in and the source is real (i.e. not
     // the test pattern source); empty when the audio TU isn't linked.
     std::string audio = "";
     int audio_bitrate_kbps = 96;
     // Remote input (Quest pointer/keyboard -> host). Portal capture sessions
     // are then created via the RemoteDesktop portal; if the desktop refuses,
     // the source falls back to capture-only by itself.
-    bool input = true;
+    bool input = false;
+    int status_fd = -1;
+    bool validate_only = false;
 };
 
 // Wire-level channel ids (kept as bare constants; they only select which audio
@@ -100,131 +111,67 @@ constexpr std::uint32_t kChannelAudioSystem = 1;
 constexpr std::uint32_t kChannelAudioMic = 2;
 
 void usage(const char* argv0) {
-    std::fprintf(
-        stderr,
-        "MetaShare streamer — mirror a Wayland session to a Quest 3 client.\n\n"
-        "Usage: %s [options]\n"
-        "  --source <test|portal|mutter>  capture backend (default depends on "
-        "build)\n"
-        "                                test:   synthetic test patterns\n"
-        "                                portal: xdg-desktop-portal (any "
-        "compositor)\n"
-        "                                        window 0 = real physical "
-        "monitor,\n"
-        "                                        windows 1..N-1 = virtual "
-        "monitors\n"
-        "                                        (shown in the app only when "
-        "selected)\n"
-        "                                mutter: GNOME direct — physical "
-        "monitor\n"
-        "                                        for window 0 (via portal) "
-        "plus\n"
-        "                                        N-1 Mutter virtual monitors\n"
-        "                                        (is-platform=true, apps can "
-        "be\n"
-        "                                        moved onto them)\n"
-        "  --monitors <n>          number of monitors (default 1)\n"
-        "  --width <px>            virtual-monitor width (default 1920)\n"
-        "  --height <px>           virtual-monitor height (default 1080)\n"
-        "  --fps <n>              frame rate (default 72)\n"
-        "  --bitrate <kbps>       max encoder bitrate; adapts down under "
-        "loss\n"
-        "                         (default 8000)\n"
-        "  --codec <hevc|h264>    preferred codec (default hevc)\n"
-        "  --no-hw                skip VAAPI/NVENC; force software encoding\n"
-        "  --port <n>             signaling TCP base port (monitor i -> "
-        "port+i)\n"
-        "  --no-discovery         disable UDP discovery responder\n"
-        "  --audio <list>         comma-separated audio channels to stream:\n"
-        "                            system  desktop output loopback\n"
-        "                            mic     host microphone\n"
-        "                            test    synthetic 440 Hz tone\n"
-        "                            none    disable audio entirely\n"
-        "                          (default: system,mic for portal/mutter,\n"
-        "                           none for test)\n"
-        "  --audio-bitrate <kbps> Opus target bitrate (default 96)\n"
-        "  --no-input             don't request remote-input injection (the\n"
-        "                         client's pointer/keyboard are then ignored)\n"
-        "  -h, --help             this help\n",
-        argv0);
+    std::fprintf(stderr,
+      "metuxa 0.2.0 - protected desktop streaming for Quest\n\n"
+      "Usage: %s [options]\n"
+      "  --source <portal|window|mutter|test>   desktop, single window, virtual or test\n"
+      "  --monitors <1..3>                    one physical + optional virtual displays\n"
+      "  --width <320..7680> --height <240..4320>  even test/virtual dimensions\n"
+      "  --fps <15..120>                      default 72\n"
+      "  --bitrate <1000..100000>              encoder ceiling kbps, default 8000\n"
+      "  --codec <hevc|h264> --no-hw           codec and software fallback\n"
+      "  --port <1024..65533>                 TLS base port, default 7878\n"
+      "  --no-discovery                      disable UDP discovery 7877\n"
+      "  --audio <none|system|test>            default system (test source: none)\n"
+      "  --audio-bitrate <16..256>             Opus kbps, default 96\n"
+      "  --input / --no-input                 request remote control / view-only (default)\n"
+      "  --status-fd <N>                      private JSON status and pairing pipe\n"
+      "  --validate                          validate options without starting anything\n"
+      "  --version / --help\n\n"
+      "TLS control and authenticated encrypted media are mandatory. Start creates\n"
+      "fresh credentials; compare the fingerprint and enter the pairing code in Quest.\n"
+      "No microphone capture. Window capture is view-only and supports one panel.\n"
+      "SIGUSR1 blocks remote input; SIGUSR2 restores only previously granted input.\n",
+      argv0);
 }
 
 bool parse_args(int argc, char** argv, Options& o) {
-    for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        auto val = [&](int& dst) {
-            if (i + 1 >= argc) return false;
-            dst = std::atoi(argv[++i]);
-            return true;
-        };
-        if (a == "-h" || a == "--help") {
-            usage(argv[0]);
-            std::exit(0);
-        } else if (a == "--source" && i + 1 < argc) {
-            o.source = argv[++i];
-            if (o.source != "test" && o.source != "portal" &&
-                o.source != "mutter") {
-                std::fprintf(stderr, "unknown source: %s\n", o.source.c_str());
-                return false;
-            }
-#if !defined(METASHARE_HAVE_MUTTER)
-            if (o.source == "mutter") {
-                std::fprintf(stderr, "mutter source not built in\n");
-                return false;
-            }
-#endif
-#if !defined(METASHARE_HAVE_PORTAL)
-            if (o.source == "portal") {
-                std::fprintf(stderr, "portal source not built in\n");
-                return false;
-            }
-#endif
-        } else if (a == "--monitors") {
-            if (!val(o.monitors)) return false;
-        } else if (a == "--width") {
-            if (!val(o.width)) return false;
-        } else if (a == "--height") {
-            if (!val(o.height)) return false;
-        } else if (a == "--fps") {
-            if (!val(o.fps)) return false;
-        } else if (a == "--bitrate") {
-            if (!val(o.bitrate_kbps)) return false;
-        } else if (a == "--codec" && i + 1 < argc) {
-            o.codec = argv[++i];
-            if (o.codec != "hevc" && o.codec != "h264") return false;
-        } else if (a == "--no-hw")
-            o.hardware = false;
-        else if (a == "--port") {
-            int p;
-            if (!val(p)) return false;
-            o.port = static_cast<std::uint16_t>(p);
-        } else if (a == "--no-discovery")
-            o.discovery = false;
-        else if (a == "--audio" && i + 1 < argc) {
-            o.audio = argv[++i];
-        } else if (a == "--audio-bitrate") {
-            if (!val(o.audio_bitrate_kbps)) return false;
-        } else if (a == "--no-input") {
-            o.input = false;
-        } else {
-            std::fprintf(stderr, "unknown arg: %s\n", a.c_str());
-            return false;
-        }
+    for(int i=1;i<argc;++i){
+        const std::string a=argv[i];
+        auto val=[&](int& dst){return i+1<argc && app::integer(argv[++i],dst);};
+        auto str=[&](std::string& dst){if(i+1>=argc)return false;dst=argv[++i];return true;};
+        if(a=="--help" || a=="-h"){usage(argv[0]);std::exit(0);}
+        else if(a=="--version"){std::puts("metuxa 0.2.0 (MetaShare ed13beb lineage, protocol 5)");std::exit(0);}
+        else if(a=="--validate")o.validate_only=true;
+        else if(a=="--source"){if(!str(o.source))return false;}
+        else if(a=="--codec"){if(!str(o.codec))return false;}
+        else if(a=="--audio"){if(!str(o.audio))return false;}
+        else if(a=="--monitors"){if(!val(o.monitors))return false;}
+        else if(a=="--width"){if(!val(o.width))return false;}
+        else if(a=="--height"){if(!val(o.height))return false;}
+        else if(a=="--fps"){if(!val(o.fps))return false;}
+        else if(a=="--bitrate"){if(!val(o.bitrate_kbps))return false;}
+        else if(a=="--audio-bitrate"){if(!val(o.audio_bitrate_kbps))return false;}
+        else if(a=="--status-fd"){if(!val(o.status_fd) || o.status_fd<3)return false;}
+        else if(a=="--port"){int n;if(!val(n) || n<1024 || n>65533)return false;o.port=static_cast<std::uint16_t>(n);}
+        else if(a=="--no-hw")o.hardware=false;
+        else if(a=="--no-discovery")o.discovery=false;
+        else if(a=="--input")o.input=true;
+        else if(a=="--no-input")o.input=false;
+        else {std::fprintf(stderr,"Unknown or incomplete option: %s\n",a.c_str());return false;}
     }
-    if (o.monitors < 1) o.monitors = 1;
-    if (o.monitors > 8) o.monitors = 8;
-
-    // Apply the default audio mode if the user didn't say. We pick a sensible
-    // default based on the active video source: real Wayland capture gets the
-    // real desktop + mic, the test-pattern source gets a sine tone (so the
-    // audio pipeline still exercises).
-    if (o.audio.empty()) {
-#if defined(METASHARE_HAVE_PORTAL) || defined(METASHARE_HAVE_MUTTER)
-        o.audio = (o.source == "test") ? "test" : "system,mic";
-#else
-        o.audio = "none";
+    if(o.source!="test" && o.source!="portal" && o.source!="window" && o.source!="mutter")return false;
+#ifndef METASHARE_HAVE_PORTAL
+    if(o.source=="portal" || o.source=="window" || o.source=="mutter"){std::fprintf(stderr,"Portal capture is not built in.\n");return false;}
 #endif
-    }
+    if(o.codec!="hevc" && o.codec!="h264")return false;
+    if(o.monitors<1 || o.monitors>3 || o.port+o.monitors-1>65535 ||
+       o.width<320 || o.width>7680 || o.width%2 || o.height<240 || o.height>4320 || o.height%2 ||
+       o.fps<15 || o.fps>120 || o.bitrate_kbps<1000 || o.bitrate_kbps>100000 ||
+       o.audio_bitrate_kbps<16 || o.audio_bitrate_kbps>256)return false;
+    if(o.source=="window" && (o.monitors!=1 || o.input)){std::fprintf(stderr,"Window capture requires --monitors 1 --no-input.\n");return false;}
+    if(o.audio.empty())o.audio=o.source=="test"?"none":"system";
+    if(o.audio!="none" && o.audio!="system" && o.audio!="test"){std::fprintf(stderr,"Only none, system or test audio is supported; microphone capture is not implemented.\n");return false;}
     return true;
 }
 
@@ -234,6 +181,8 @@ struct Pipeline {
     std::unique_ptr<FrameSource> source;
     std::unique_ptr<Encoder> encoder;
     std::unique_ptr<RtpServer> server;
+    std::shared_ptr<app::InputState> input_state;
+    bool input_available = false;
     std::thread thread;
     std::atomic<bool> running{false};
 
@@ -243,6 +192,14 @@ struct Pipeline {
     int abr_kbps = 0;  // current encoder target
     std::chrono::steady_clock::time_point abr_last_down{};
     std::chrono::steady_clock::time_point abr_clean_since{};
+    ~Pipeline() {
+        running=false;
+        if(thread.joinable())thread.join();
+        if(server)server->stop();
+        if(input_state)input_state->release();
+        input_state.reset();
+        if(source)source->stop();
+    }
 };
 
 // Bitrate adaptation bounds/steps. On loss we cut hard (multiplicative
@@ -256,7 +213,7 @@ constexpr auto kAbrGrowAfterClean = std::chrono::seconds(4);
 
 #if defined(METASHARE_HAVE_PORTAL) || defined(METASHARE_HAVE_MUTTER)
 // One capture→encode pipeline per audio channel. Encoded packets are fanned
-// out to *every* video pipeline's NetServer so a client that connected to any
+// out only to the primary video pipeline's NetServer so a client that connected to any
 // monitor port gets the same audio. Bandwidth cost is tiny (~96 kbps/channel).
 struct AudioChannel {
     std::uint32_t channel_id = 0;
@@ -264,6 +221,13 @@ struct AudioChannel {
     std::unique_ptr<AudioEncoder> encoder;
     std::thread thread;
     std::atomic<bool> running{false};
+    ~AudioChannel() {
+        running = false;
+        // Audio sources must unblock next_chunk before the reader can join.
+        // Their loaned PCM remains valid until the thread has finished.
+        if (source) source->stop();
+        if (thread.joinable()) thread.join();
+    }
 };
 
 // Parse the comma-separated --audio list into channel ids. Recognised tokens:
@@ -321,7 +285,7 @@ make_source(const Options& o, int monitor_index,
         SourceFormat f{o.width, o.height, o.fps, 1};
         return std::make_unique<TestPatternSource>(f, monitor_index);
     }
-    if (o.source == "portal") {
+    if (o.source == "portal" || o.source == "window") {
 #ifdef METASHARE_HAVE_PORTAL
         // Monitor 0: the user's real physical display (source_type=MONITOR
         // brings up the standard GNOME picker once for the actual screen).
@@ -329,9 +293,10 @@ make_source(const Options& o, int monitor_index,
         // client only opens when selected in the app's monitor menu.
         PortalOptions opts;
         opts.source_types =
-            (monitor_index == 0) ? 1u : 4u;  // MONITOR : VIRTUAL
+            (monitor_index == 0) ? (o.source == "window" ? 2u : 1u) : 4u;  // MONITOR : VIRTUAL
         opts.fps_hint = o.fps;
         opts.enable_input = o.input;
+        opts.cancel_requested = [] { return g_stop.load(); };
         return std::make_unique<PortalPipeWireSource>(opts);
 #else
         err = "this build has no portal support; rebuild with portal deps or "
@@ -348,6 +313,7 @@ make_source(const Options& o, int monitor_index,
             opts.source_types = 1;  // MONITOR
             opts.fps_hint = o.fps;
             opts.enable_input = o.input;
+            opts.cancel_requested = [] { return g_stop.load(); };
             return std::make_unique<PortalPipeWireSource>(opts);
 #else
             err = "mutter mode needs the portal source for monitor 0; "
@@ -372,6 +338,7 @@ make_source(const Options& o, int monitor_index,
             opts.source_types = 4;  // VIRTUAL
             opts.fps_hint = o.fps;
             opts.enable_input = o.input;
+            opts.cancel_requested = [] { return g_stop.load(); };
             return std::make_unique<PortalPipeWireSource>(opts);
         }
 #else
@@ -391,6 +358,22 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    if (opt.validate_only) { std::puts("Options valid; no capture, network, or input started."); return 0; }
+    std::signal(SIGPIPE, SIG_IGN);
+    std::string status_err;
+    app::Status status;
+    if(!status.init(opt.status_fd,status_err)){std::fprintf(stderr,"%s\n",status_err.c_str());return 2;}
+    status.state("starting", "Initializing protected session");
+    app::InstanceLock instance;
+    if(!instance.acquire(status_err)){status.state("error",status_err);std::fprintf(stderr,"%s\n",status_err.c_str());return 1;}
+    auto credentials=security::ServerCredentials::create(status_err);
+    if(!credentials){status.state("error","Unable to create TLS identity");std::fprintf(stderr,"TLS initialization failed: %s\n",status_err.c_str());return 1;}
+    if(!status.emit("{\"type\":\"security\",\"fingerprint\":"+app::quote(credentials->fingerprint())+
+                    ",\"pairing_code\":"+app::quote(credentials->pairing_code())+"}")){
+        std::fprintf(stderr,"Private status consumer unavailable; refusing to start without pairing information.\n");return 1;
+    }
+    std::signal(SIGUSR1,on_signal);
+    std::signal(SIGUSR2,on_signal);
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
@@ -491,6 +474,8 @@ int main(int argc, char** argv) {
 #endif
 
     for (int i = 0; i < opt.monitors; ++i) {
+        if(g_stop)break;
+        status.state(opt.source=="test"?"starting":"requesting_access", "Preparing monitor "+std::to_string(i+1));
         auto p = std::make_unique<Pipeline>();
         p->index = i;
 
@@ -502,12 +487,13 @@ int main(int argc, char** argv) {
 #endif
         if (!p->source) {
             std::fprintf(stderr, "[monitor %d] error: %s\n", i, err.c_str());
-            return 1;
+            status.state("error",err); return 1;
         }
         if (!p->source->start(err)) {
+            if (g_stop) { status.state("stopped", "Session start cancelled"); return 0; }
             std::fprintf(stderr, "[monitor %d] source start failed: %s\n", i,
                          err.c_str());
-            return 1;
+            status.state("error",err); return 1;
         }
         const SourceFormat fmt = p->source->format();
         std::fprintf(stderr, "[monitor %d] capture %dx%d @ %d/%d fps\n", i,
@@ -527,7 +513,7 @@ int main(int argc, char** argv) {
         if (!p->encoder->open(ecfg, err)) {
             std::fprintf(stderr, "[monitor %d] encoder open failed: %s\n", i,
                          err.c_str());
-            return 1;
+            status.state("error",err); return 1;
         }
         const bool is_h265 = (p->encoder->codec() == proto::Codec::kH265);
         std::fprintf(stderr, "[monitor %d] encoder: %s (%s)%s\n", i,
@@ -537,6 +523,9 @@ int main(int argc, char** argv) {
         // --- RTP server (signaling + raw UDP media transport) ---
         p->server = std::make_unique<RtpServer>();
         p->server->set_id(i);
+        p->server->set_monitor_count(opt.monitors);
+        p->server->set_security(credentials);
+        p->server->set_audio_enabled(false);
         VideoFormat vfmt;
         vfmt.width = fmt.width;
         vfmt.height = fmt.height;
@@ -552,7 +541,6 @@ int main(int argc, char** argv) {
                                         audio_fmt.channels);
         }
 #endif
-        const std::uint16_t port = static_cast<std::uint16_t>(opt.port + i);
         // Service client PLI / keyframe requests by forcing the encoder's next
         // frame to be a keyframe.
         p->server->on_keyframe_request = [enc = p->encoder.get()] {
@@ -564,30 +552,23 @@ int main(int argc, char** argv) {
         // Sources without an injection backend leave on_input unset and the
         // client's input is dropped. (The sink stays valid until source->stop()
         // and guards itself against post-stop calls.)
-        if (InputSink* sink = p->source->input_sink()) {
-            p->server->on_input = [sink](const input::Event& e) {
-                switch (e.kind) {
-                case input::Event::Kind::kMove:
-                    sink->pointer_motion(e.x, e.y);
-                    break;
-                case input::Event::Kind::kButton:
-                    sink->pointer_button(e.button, e.pressed);
-                    break;
-                case input::Event::Kind::kScroll:
-                    sink->pointer_scroll(e.scroll_v, e.scroll_h);
-                    break;
-                case input::Event::Kind::kKey:
-                    sink->key(e.keysym, e.pressed);
-                    break;
-                }
-            };
-            std::fprintf(stderr, "[monitor %d] remote input: enabled\n", i);
-        } else if (opt.input) {
-            std::fprintf(stderr,
-                         "[monitor %d] remote input: unavailable for this "
-                         "source\n",
-                         i);
+        if(opt.input) {
+            if(InputSink* sink=p->source->input_sink()){
+                p->input_available=true;
+                p->input_state=std::make_shared<app::InputState>(sink);
+                p->server->on_input=[state=p->input_state](const input::Event& e){state->accept(e);};
+                p->server->on_input_release=[state=p->input_state]{state->release();};
+            }
         }
+        p->server->set_input_enabled(p->input_available);
+        status.emit("{\"type\":\"capability\",\"monitor\":"+std::to_string(i)+
+                    ",\"input_available\":"+(p->input_available?"true":"false")+
+                    ",\"input_active\":"+(p->input_available && g_input_gate.load()?"true":"false")+",\"audio_active\":false}");
+        status.emit("{\"type\":\"stream\",\"monitor\":"+std::to_string(i)+
+                    ",\"codec\":"+app::quote(is_h265?"hevc":"h264")+
+                    ",\"encoder\":"+app::quote(p->encoder->codec_name())+
+                    ",\"width\":"+std::to_string(fmt.width)+",\"height\":"+std::to_string(fmt.height)+
+                    ",\"fps\":"+std::to_string(fmt.fps_num/(fmt.fps_den?fmt.fps_den:1))+"}");
 
         // Pace all video sends through the shared bucket, and adapt the
         // encoder bitrate to the loss the client reports (RTCP RRs).
@@ -605,7 +586,7 @@ int main(int argc, char** argv) {
                 raw->abr_clean_since = now;
                 if (now - raw->abr_last_down >= kAbrDownCooldown) {
                     next =
-                        std::max(kAbrMinKbps, static_cast<int>(raw->abr_kbps *
+                        std::max(std::min(kAbrMinKbps,max_kbps), static_cast<int>(raw->abr_kbps *
                                                                kAbrCutFactor));
                     raw->abr_last_down = now;
                 }
@@ -630,20 +611,12 @@ int main(int argc, char** argv) {
                 raw->encoder->set_bitrate(next);
             }
         };
-        if (!p->server->start(port, err)) {
-            std::fprintf(stderr, "[monitor %d] server start failed: %s\n", i,
-                         err.c_str());
-            return 1;
-        }
-        std::fprintf(stderr, "[monitor %d] signaling on tcp/%u\n", i,
-                     static_cast<unsigned>(port));
-
         pipelines.push_back(std::move(p));
     }
 
     // --- discovery ---
     DiscoveryResponder discovery;
-    if (opt.discovery) {
+    if (opt.discovery && !g_stop) {
         if (!discovery.start(opt.port, static_cast<std::uint16_t>(opt.monitors),
                              err))
             std::fprintf(stderr, "warning: discovery disabled: %s\n",
@@ -656,6 +629,7 @@ int main(int argc, char** argv) {
 
     // --- capture threads ---
     for (auto& p : pipelines) {
+        if (g_stop) break;
         p->running = true;
         auto* raw = p.get();
         raw->thread = std::thread([raw] {
@@ -717,18 +691,20 @@ int main(int argc, char** argv) {
                 next_tick += period;
                 auto now = std::chrono::steady_clock::now();
                 if (next_tick < now) next_tick = now + period;  // fell behind
-                if (raw->server->peer_count() == 0) continue;
-
+                // Poll source health even with no connected client. A revoked
+                // portal session must not leave a listening zombie server.
                 AVFrame* frame = nullptr;
                 std::int64_t pts = 0;
                 const int r = raw->source->latest_frame(&frame, pts);
                 if (r < 0) {
                     std::fprintf(stderr, "[monitor %d] source ended\n",
                                  raw->index);
-                    break;
+                    g_failed=true; g_stop=1; break;
                 }
                 if (r > 0) last = frame;
-                if (!last) continue;  // no frame captured yet
+                if (!last || raw->server->peer_count() == 0) continue;
+                // No video encoding without a client, but keep the latest frame.
+
 
                 // PTS snapped to absolute period boundaries of the wall clock,
                 // so consecutive ticks land on consecutive multiples of
@@ -749,7 +725,7 @@ int main(int argc, char** argv) {
                 if (!raw->encoder->encode(last, enc_pts, sink, thread_err)) {
                     std::fprintf(stderr, "[monitor %d] encode error: %s\n",
                                  raw->index, thread_err.c_str());
-                    break;
+                    g_failed=true; g_stop=1; break;
                 }
             }
             raw->encoder->flush(sink);
@@ -787,6 +763,7 @@ int main(int argc, char** argv) {
         }
 
         for (const auto& spec : specs) {
+            if (g_stop) break;
             auto ac = std::make_unique<AudioChannel>();
             ac->channel_id = spec.channel_id;
 
@@ -818,12 +795,15 @@ int main(int argc, char** argv) {
             }
 
             ac->running = true;
-            // Fan audio out to every monitor's RtpServer. Only monitor 0's
+            // Send audio only to the primary monitor's RtpServer. Only monitor 0's
             // server has audio configured, but broadcast_audio() is a no-op
             // for servers that never had a client READY on the audio stream.
             std::vector<RtpServer*> sinks;
             sinks.reserve(pipelines.size());
-            for (auto& p : pipelines) sinks.push_back(p->server.get());
+            if(!pipelines.empty()) {
+                pipelines[0]->server->set_audio_enabled(true);
+                sinks.push_back(pipelines[0]->server.get());
+            }
             const std::uint32_t cid = spec.channel_id;
             auto* raw = ac.get();
             ac->thread = std::thread([raw, sinks, cid] {
@@ -840,15 +820,22 @@ int main(int argc, char** argv) {
                     int r = raw->source->next_chunk(&pcm, pts);
                     if (r == 0) continue;
                     if (r < 0) {
-                        std::fprintf(stderr, "[audio:%u] source ended\n", cid);
+                        if (raw->running && !g_stop) {
+                            std::fprintf(stderr, "[audio:%u] source ended unexpectedly\n", cid);
+                            g_failed = true;
+                            g_stop = true;
+                        }
                         break;
                     }
                     if (!raw->encoder->encode(pcm, r, pts, sink, thread_err)) {
                         std::fprintf(stderr, "[audio:%u] encode error: %s\n",
                                      cid, thread_err.c_str());
+                        g_failed = true;
+                        g_stop = true;
                         break;
                     }
                 }
+                raw->running = false;
                 raw->encoder->flush(sink);
             });
 
@@ -865,7 +852,51 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    while (!g_stop) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    bool startup_failed=false;
+    bool audio_active=false;
+#if defined(METASHARE_HAVE_PORTAL) || defined(METASHARE_HAVE_MUTTER)
+    audio_active=!audio_pipelines.empty();
+#endif
+    if(pipelines.size()!=static_cast<std::size_t>(opt.monitors))g_stop=1;
+    bool previous_gate = g_input_gate.load();
+    for(auto& p:pipelines){
+        if(g_stop)break;
+        const bool input_active = previous_gate && p->input_available;
+        if (p->input_state) p->input_state->set_allowed(input_active);
+        p->server->set_input_enabled(input_active);
+        if(!p->server->start(static_cast<std::uint16_t>(opt.port+p->index),err)){
+            status.state("error",err); std::fprintf(stderr,"Server start failed: %s\n",err.c_str());
+            startup_failed=true;g_stop=1;break;
+        }
+        status.emit("{\"type\":\"capability\",\"monitor\":"+std::to_string(p->index)+
+                    ",\"input_available\":"+(p->input_available?"true":"false")+
+                    ",\"input_active\":"+(input_active?"true":"false")+
+                    ",\"audio_active\":"+(p->index==0 && audio_active?"true":"false")+"}");
+    }
+    if(!g_stop)status.emit("{\"state\":\"listening\",\"endpoint\":\"TLS port "+std::to_string(opt.port)+
+                          "\",\"message\":\"Ready for paired Quest\"}");
+    int previous_peers=0;
+    while (!g_stop) {
+        int peers=0;
+        bool gate=g_input_gate!=0;
+        for(auto& p:pipelines){
+            peers+=p->server->peer_count();
+            const bool available=p->input_available && p->source->input_sink()!=nullptr;
+            const bool availability_changed = available != p->input_available;
+            if (availability_changed) p->input_available = available;
+            if(gate!=previous_gate || availability_changed){
+                if(p->input_state)p->input_state->set_allowed(gate && available);
+                p->server->set_input_enabled(gate && available);
+            }
+            if(gate!=previous_gate || availability_changed)status.emit("{\"type\":\"capability\",\"monitor\":"+std::to_string(p->index)+
+                ",\"input_available\":"+(available?"true":"false")+
+                ",\"input_active\":"+(gate&&available?"true":"false")+
+                ",\"audio_active\":"+(p->index==0&&audio_active?"true":"false")+"}");
+        }
+        if(peers!=previous_peers){status.state(peers?"connected":"listening",peers?"Protected Quest session connected":"Waiting for paired Quest");previous_peers=peers;}
+        previous_gate=gate;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
 
     std::fprintf(stderr, "\n[streamer] shutting down\n");
     discovery.stop();
@@ -879,11 +910,9 @@ int main(int argc, char** argv) {
     audio_pipelines.clear();
 #endif
 
-    for (auto& p : pipelines) {
-        p->running = false;
-        p->source->stop();
-        if (p->thread.joinable()) p->thread.join();
-        p->server->stop();
-    }
+    for (auto& p : pipelines) p->running=false;
+    pipelines.clear(); // stops networking and releases held input before source teardown
+    if(g_failed || startup_failed){status.state("error","Capture, audio, encoder or network stopped unexpectedly; see diagnostic log");return 1;}
+    status.state("stopped", "Session ended; pairing credentials invalidated");
     return 0;
 }

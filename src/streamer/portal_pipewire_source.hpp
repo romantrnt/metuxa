@@ -25,9 +25,11 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 
 #include "frame_source.hpp"
 #include "input_sink.hpp"
@@ -47,6 +49,22 @@ namespace metashare {
 // this header.
 struct PortalState;
 
+// RemoteDesktop.Start returns the devices actually selected, not necessarily
+// all requested devices. This client exposes one combined input capability.
+inline constexpr bool portal_grants_complete_input(std::uint32_t devices) {
+    return (devices & 3u) == 3u; // keyboard (1) and pointer (2)
+}
+
+// Only explicit API-availability errors justify trying capture-only. Denials,
+// cancellation, timeouts and generic failures never authorize another picker.
+inline constexpr bool portal_remote_desktop_unavailable(std::string_view error_name) {
+    return error_name == "org.freedesktop.DBus.Error.UnknownMethod" ||
+           error_name == "org.freedesktop.DBus.Error.UnknownInterface" ||
+           error_name == "org.freedesktop.DBus.Error.NotSupported" ||
+           error_name == "org.freedesktop.portal.Error.NotImplemented" ||
+           error_name == "org.freedesktop.portal.Error.NotSupported";
+}
+
 // Controls what the portal asks the user for in SelectSources.
 //   source_types : bitmask of xdg-desktop-portal AvailableSourceTypes
 //                  (1=MONITOR, 2=WINDOW, 4=VIRTUAL).
@@ -60,8 +78,9 @@ struct PortalOptions {
     bool multiple = false;
     std::uint32_t cursor_mode = 2;  // METADATA (cursor as PipeWire metadata)
     // Request a RemoteDesktop session (pointer+keyboard injection). Falls back
-    // to a plain capture-only ScreenCast session if the portal refuses.
+    // to a plain capture-only ScreenCast session only if that API is unavailable.
     bool enable_input = false;
+    std::function<bool()> cancel_requested;
 };
 
 class PortalPipeWireSource final : public FrameSource, public InputSink {
@@ -72,7 +91,7 @@ class PortalPipeWireSource final : public FrameSource, public InputSink {
 
     bool start(std::string& err) override;
     void stop() override;
-    SourceFormat format() const override { return fmt_; }
+    SourceFormat format() const override { std::lock_guard<std::mutex> lock(mu_); return fmt_; }
     int next_frame(AVFrame** out, std::int64_t& pts_usec) override;
     int latest_frame(AVFrame** out, std::int64_t& pts_usec) override;
 
@@ -89,6 +108,7 @@ class PortalPipeWireSource final : public FrameSource, public InputSink {
     // --- called from the PipeWire thread (public so C callbacks can reach) ---
     void on_param_changed(const struct spa_pod* param);
     void on_process();
+    void on_stream_ended();
 
   private:
     // Drives the xdg-desktop-portal dialog; returns a PipeWire fd (owned by
@@ -124,13 +144,15 @@ class PortalPipeWireSource final : public FrameSource, public InputSink {
     // Triple buffer: PipeWire writes back_ and publishes front_. The consumer
     // swaps front_ with out_ under mu_, retaining exclusive ownership until
     // its next pull. No second full-frame copy is needed.
-    std::mutex mu_;
+    mutable std::mutex mu_;
     std::condition_variable cv_;
     AVFrame* front_ = nullptr;
     AVFrame* back_ = nullptr;
     AVFrame* out_ = nullptr;
     bool have_new_ = false;
     std::atomic<bool> running_{false};
+    std::atomic<bool> ended_{false};
+    bool remote_desktop_unavailable_ = false; // synchronous request result only
     std::int64_t pts_usec_ = 0;
 
     // Remote-input state. input_mu_ guards the portal proxy against teardown

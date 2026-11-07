@@ -2,7 +2,6 @@ package com.metashare.client;
 
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
-import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
@@ -65,7 +64,6 @@ public final class AudioDecoder {
                 .setBufferSizeInBytes(bufSize)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-                .setSessionId(AudioManager.AUDIO_SESSION_ID_GENERATE)
                 .build();
         track.play();
         Log.i(TAG, "opened opus " + sampleRate + "Hz " + channels + "ch");

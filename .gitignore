@@ -18,3 +18,8 @@
 /.flatpak-builder
 *.flatpak
 /files.zip
+
+/.deps/
+/build-*/
+/test-output/
+/dist/

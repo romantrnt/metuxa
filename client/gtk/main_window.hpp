@@ -1,69 +1,76 @@
-// Main window for the MetaShare streamer control panel.
-
 #pragma once
+#include "control_model.hpp"
+#include "server_process.hpp"
+#include "gtkmm_compat.hpp"
+#include <deque>
+#include <map>
 
-#include <gtkmm.h>
-
-#include <sigc++/connection.h>
-#include <sys/types.h>
-
-#include <vector>
-#include <string>
-
-// A GNOME-styled control panel that launches `metashare-streamer` with the
-// chosen settings and surfaces its log output. The only user-facing knobs are
-// codec / bitrate / frame rate — everything else (capture source, resolution,
-// hardware encode, ports, discovery) is left to the streamer's sane defaults.
-// All controls are disabled while a stream is running.
 class MainWindow : public Gtk::Window {
-  public:
+public:
     MainWindow();
     ~MainWindow() override;
-
-  private:
-    // ---- UI construction ----
+private:
+    friend struct ControlUiTest;
     void build_ui();
-    Gtk::ListBoxRow* make_row(const Glib::ustring& title, Gtk::Widget& control);
-    Gtk::Label* make_section_label(const Glib::ustring& text);
-
-    // ---- Signal handlers ----
-    void on_primary_clicked();
-    bool on_pipe_io(Glib::IOCondition cond, int fd);
-    void on_child_exited(GPid pid, int status);
-
-    // ---- Streamer control ----
-    void start_streamer();
-    void stop_streamer();
-    void apply_running_state(bool running);
-    void set_status(const Glib::ustring& text, const Glib::ustring& dot_class);
-    void append_log(const Glib::ustring& text);
-    std::vector<std::string> build_argv() const;
-    Glib::ustring resolve_streamer_path() const;
-
-    // ---- Widgets ----
+    Gtk::Widget& row(const std::string& title, const std::string& detail, Gtk::Widget& control);
+    Gtk::Label& label(const std::string& text, const std::string& style = "");
+    Gtk::Box& section(const std::string& title);
+    void load_widgets();
+    metuxa::control::Settings read_widgets() const;
+    void settings_changed();
+    void update_source();
+    void apply_profile();
+    void start_server();
+    void stop_server();
+    void on_event(const std::string& line);
+    void on_exit(int status, bool requested);
+    void update_actions();
+    void set_status(const std::string& title, const std::string& detail, const std::string& color);
+    void append_log(const std::string& text);
+    void record_event(const std::string& text);
+    void update_stream_summary();
+    void save_diagnostics();
+    bool close_requested();
+    void clear_security();
+    void copy_text(const std::string& text, const std::string& description);
+    metuxa::control::Settings settings_;
+    metuxa::control::ServerProcess server_;
     Gtk::HeaderBar header_;
-    Gtk::Button btn_primary_;  // full-width Start/Stop in content area
-    Gtk::Label status_label_;
-    Gtk::Image status_dot_;  // coloured dot next to the status text
-
-    Gtk::SpinButton spin_fps_;
-    Gtk::SpinButton spin_bitrate_;
-    Gtk::SpinButton spin_monitors_;
-    Gtk::DropDown drop_codec_;
-
-    Gtk::ScrolledWindow log_scroll_;
+    Gtk::Stack stack_;
+    Gtk::StackSwitcher switcher_;
+    Gtk::Box settings_box_{Gtk::Orientation::VERTICAL, 18};
+    Gtk::Button start_button_{"Start server"};
+    Gtk::Button diagnostics_button_{"Save diagnostics…"};
+    Gtk::Label status_title_;
+    Gtk::Label status_detail_;
+    Gtk::Label status_badge_;
+    Gtk::Label notice_;
+    Gtk::Label stream_summary_;
+    Gtk::Label live_input_label_;
+    Gtk::Switch live_input_;
+    Gtk::Box live_input_box_{Gtk::Orientation::HORIZONTAL, 12};
+    Gtk::DropDown source_, profile_, codec_;
+    Gtk::SpinButton fps_, bitrate_, monitors_, width_, height_, port_;
+    Gtk::Switch audio_, input_, hardware_, discovery_;
+    Gtk::Label source_detail_, resolution_detail_;
+    Gtk::Label endpoints_, fingerprint_;
+    Gtk::Entry pairing_code_;
+    Gtk::CheckButton reveal_code_{"Reveal pairing code"};
+    Gtk::Button copy_code_{"Copy code"}, copy_pin_{"Copy fingerprint"}, copy_endpoint_{"Copy address"};
+    Gtk::Label pairing_hint_;
     Gtk::TextView log_view_;
-    Glib::RefPtr<Gtk::TextBuffer> log_buf_;
-
-    // Container holding all setting rows — disabled as a group while running.
-    Gtk::Box settings_box_;
-
-    // ---- Subprocess state ----
-    GPid pid_ = 0;
-    bool running_ = false;
-    int stdout_fd_ = -1;
-    int stderr_fd_ = -1;
-    sigc::connection io_stdout_conn_;
-    sigc::connection io_stderr_conn_;
-    sigc::connection child_watch_conn_;
+    Glib::RefPtr<Gtk::TextBuffer> log_buffer_;
+    Glib::RefPtr<Gio::Cancellable> dialogs_cancel_;
+    Glib::RefPtr<Gtk::AlertDialog> close_dialog_;
+    Glib::RefPtr<Gtk::FileDialog> file_dialog_;
+    sigc::connection log_timer_;
+    sigc::connection save_timer_;
+    sigc::connection startup_timer_;
+    bool loading_ = false, closing_ = false, confirming_close_ = false, had_error_ = false;
+    bool live_switch_update_ = false;
+    std::string pin_, code_, primary_endpoint_;
+    std::deque<std::string> log_lines_;
+    std::vector<std::string> diagnostic_events_;
+    std::map<int, std::string> streams_;
+    std::map<int, bool> input_available_, input_active_, audio_active_;
 };

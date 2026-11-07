@@ -55,6 +55,7 @@ class PipeWireAudioSource final : public AudioSource {
 
     // Called from the PipeWire thread (public so the C callbacks can reach in).
     void on_process();
+    void on_state_changed(int old_state, int state);
 
   private:
     Mode mode_;
@@ -77,6 +78,8 @@ class PipeWireAudioSource final : public AudioSource {
     std::vector<std::int16_t> loan_;
     std::int64_t pts_usec_ = 0;
     std::atomic<bool> running_{false};
+    std::atomic<bool> ready_{false};
+    std::atomic<bool> failed_{false};
 };
 
 }  // namespace metashare

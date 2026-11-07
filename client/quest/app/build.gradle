@@ -7,14 +7,14 @@ android {
     compileSdk 34
 
     defaultConfig {
-        applicationId 'com.metashare.client'
+        applicationId 'dev.metuxa.quest'
         minSdk 32          // Quest 3 runtime
-        targetSdk 32
-        versionCode 1
-        versionName '0.1.0'
+        targetSdk 34
+        versionCode 2
+        versionName '0.2.0'
     }
 
-    // Cleartext LAN streaming for now.
+    // Pinned TLS signaling and authenticated encrypted media.
     buildTypes {
         debug { debuggable true }
         release { minifyEnabled false }
@@ -41,3 +41,10 @@ dependencies {
     // decoded via the Android framework (MediaCodec H.265/H.264 + Opus,
     // AudioTrack, Surface).
 }
+
+// No downloaded test dependency is needed for the state machine, policy and privacy suite.
+tasks.register('testCore', Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'bash', 'tests/run-core-tests.sh'
+}
+tasks.named('check').configure { dependsOn 'testCore' }

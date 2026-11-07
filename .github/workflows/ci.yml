@@ -1,200 +1,23 @@
-name: CI
-
-# Build-as-test on every push and PR; cut a release (with the Quest APK
-# attached) whenever a tag is pushed.
+name: metuxa checks
 on:
-  push:
-    branches: ['**']
-    tags: ['*']
+  workflow_dispatch:
   pull_request:
-
-# Avoid piling up redundant runs on the same ref.
+permissions:
+  contents: read
 concurrency:
-  group: ci-${{ github.ref }}
+  group: metuxa-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  # --- Lint: clang-format style + clang-tidy static analysis ----------------
-  lint:
-    name: Lint (clang-format + clang-tidy)
-    runs-on: ubuntu-latest
+  native:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-      - name: Run clang-format + clang-tidy
-        run: nix develop --command scripts/lint.sh
-
-  # --- Check: compile the Wayland streamer/UI via the Nix flake -------------
-  check:
-    name: Build streamer (Linux)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-      - name: Build
-        run: nix build .#metashare --print-build-logs
-
-  # --- Build the Quest client APK (mirrors client/quest/README.md) ----------
-  apk:
-    name: Build Quest APK
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      # The Android SDK/NDK (~1 GB) is fetched by setup-android-sdk.sh; cache it
-      # so we only pay that download when the script or its versions change.
-      - name: Cache Android SDK + Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            client/quest/.android-sdk
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: android-${{ runner.os }}-${{ hashFiles('client/quest/setup-android-sdk.sh', 'client/quest/app/build.gradle') }}
-          restore-keys: android-${{ runner.os }}-
-
-      - name: Install SDK and build APK
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y meson ninja-build g++ pkg-config libssl-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libpipewire-0.3-dev libsdbus-c++-dev libgtkmm-4.0-dev libjson-glib-dev
+      - name: Build and test
         run: |
-          nix develop .#android --command bash -c '
-            set -euo pipefail
-            cd client/quest
-            ./setup-android-sdk.sh
-            gradle --no-daemon assembleDebug
-          '
-
-      # The Gradle ABI split names the artifact after the ABI, not "app-debug".
-      - name: Stage APK
-        run: |
-          mkdir -p dist
-          cp client/quest/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk \
-             dist/metashare-quest.apk
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: metashare-quest-apk
-          path: dist/metashare-quest.apk
-
-  # --- Build the CLI-only Flatpak via the flake -----------------------------
-  flatpak-cli:
-    name: Build CLI Flatpak
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      # Ubuntu 24.04 runners restrict unprivileged user namespaces via AppArmor,
-      # which breaks bubblewrap (flatpak-builder's sandbox). Relax it.
-      - name: Allow unprivileged user namespaces (bubblewrap)
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      # Cache the per-user flatpak install (runtimes/SDKs) and the builder's
-      # ccache/source cache so we don't re-download/rebuild deps every run.
-      - name: Cache flatpak runtimes + builder cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.local/share/flatpak
-            ~/.cache/flatpak-builder
-          key: flatpak-cli-${{ runner.os }}-${{ hashFiles('flatpak/dev.metashare.Streamer.yml', 'flatpak/modules/*') }}
-          restore-keys: flatpak-cli-${{ runner.os }}-
-
-      - name: Build flatpak bundle
-        run: nix run .#flatpak-cli --print-build-logs
-
-      - name: Stage bundle
-        run: |
-          mkdir -p dist
-          cp dev.metashare.Streamer.flatpak dist/
-
-      - name: Upload flatpak artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: metashare-flatpak-cli
-          path: dist/dev.metashare.Streamer.flatpak
-
-  # --- Build the GUI (GTK4 control panel) Flatpak via the flake -------------
-  flatpak-ui:
-    name: Build GUI Flatpak
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Allow unprivileged user namespaces (bubblewrap)
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      - name: Cache flatpak runtimes + builder cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.local/share/flatpak
-            ~/.cache/flatpak-builder
-          key: flatpak-ui-${{ runner.os }}-${{ hashFiles('flatpak/dev.metashare.StreamerUI.yml', 'flatpak/modules/*') }}
-          restore-keys: flatpak-ui-${{ runner.os }}-
-
-      - name: Build flatpak bundle
-        run: nix run .#flatpak-ui --print-build-logs
-
-      - name: Stage bundle
-        run: |
-          mkdir -p dist
-          cp dev.metashare.StreamerUI.flatpak dist/
-
-      - name: Upload flatpak artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: metashare-flatpak-ui
-          path: dist/dev.metashare.StreamerUI.flatpak
-
-  # --- Release: publish the APK + Flatpaks whenever a tag is pushed ----------
-  release:
-    name: Publish release
-    if: github.ref_type == 'tag'
-    needs: [lint, check, apk, flatpak-cli, flatpak-ui]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: metashare-quest-apk
-          path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          name: metashare-flatpak-cli
-          path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          name: metashare-flatpak-ui
-          path: dist
-
-      - name: Name the assets after the tag
-        run: |
-          mv dist/metashare-quest.apk "dist/metashare-quest-${GITHUB_REF_NAME}.apk"
-          mv dist/dev.metashare.Streamer.flatpak "dist/metashare-streamer-${GITHUB_REF_NAME}.flatpak"
-          mv dist/dev.metashare.StreamerUI.flatpak "dist/metashare-streamer-ui-${GITHUB_REF_NAME}.flatpak"
-
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.apk
-            dist/*.flatpak
-          generate_release_notes: true
+          meson setup build -Dportal=enabled -Dmutter=disabled
+          meson compile -C build
+          meson test -C build --print-errorlogs
+# No release, push, deployment or artifact-publication permission.
+# Android signing and public distribution require a separate reviewed workflow.

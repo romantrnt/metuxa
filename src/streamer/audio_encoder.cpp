@@ -22,12 +22,16 @@ std::string av_err(int e) {
 // libopus wrappers accept interleaved s16 or flt; some older builds accept
 // fltp. We just take the codec's first listed format.
 AVSampleFormat pick_format(const AVCodec* codec) {
-    if (codec && codec->sample_fmts) {
-        for (const AVSampleFormat* p = codec->sample_fmts;
-             *p != AV_SAMPLE_FMT_NONE; ++p) {
-            return *p;
-        }
-    }
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+    const void* formats = nullptr;
+    int count = 0;
+    if (codec && avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT,
+                                              0, &formats, &count) >= 0 && formats && count > 0)
+        return static_cast<const AVSampleFormat*>(formats)[0];
+#else
+    if (codec && codec->sample_fmts && codec->sample_fmts[0] != AV_SAMPLE_FMT_NONE)
+        return codec->sample_fmts[0];
+#endif
     return AV_SAMPLE_FMT_S16;
 }
 
@@ -36,6 +40,12 @@ AVSampleFormat pick_format(const AVCodec* codec) {
 AudioEncoder::~AudioEncoder() { close(); }
 
 bool AudioEncoder::open(const AudioEncoderConfig& cfg, std::string& err) {
+    if(cfg.format.sample_rate!=48000 || (cfg.format.channels!=1 && cfg.format.channels!=2) ||
+       cfg.bitrate_kbps<16 || cfg.bitrate_kbps>256 ||
+       (cfg.frame_ms!=5 && cfg.frame_ms!=10 && cfg.frame_ms!=20 && cfg.frame_ms!=40 && cfg.frame_ms!=60)){
+        err="Unsupported audio configuration";return false;
+    }
+    close();
     cfg_ = cfg;
 
     const AVCodec* codec = avcodec_find_encoder_by_name("libopus");
@@ -146,8 +156,8 @@ void AudioEncoder::close() {
 bool AudioEncoder::encode(const std::int16_t* data, int sample_count,
                           std::int64_t pts_usec, const AudioPacketSink& sink,
                           std::string& err) {
-    if (!ctx_) {
-        err = "audio encoder not open";
+    if (!ctx_ || !data || sample_count<=0 || sample_count>cfg_.format.sample_rate*cfg_.format.channels || sample_count%cfg_.format.channels) {
+        err = "audio encoder not open or invalid PCM chunk";
         return false;
     }
     if (!pts_set_) {

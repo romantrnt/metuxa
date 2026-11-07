@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <utility>
+#include <thread>
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
@@ -16,12 +17,12 @@ namespace metashare {
 
 namespace {
 
-void cb_state_changed(void* /*data*/, enum pw_stream_state old,
+void cb_state_changed(void* data, enum pw_stream_state old,
                       enum pw_stream_state state, const char* error) {
     std::fprintf(stderr, "[pw-audio] state: %s%s%s\n",
                  pw_stream_state_as_string(state), error ? " - " : "",
                  error ? error : "");
-    (void)old;
+    static_cast<PipeWireAudioSource*>(data)->on_state_changed(old, state);
 }
 
 void cb_process(void* data) {
@@ -47,10 +48,12 @@ PipeWireAudioSource::PipeWireAudioSource(Mode mode, AudioFormat fmt)
 PipeWireAudioSource::~PipeWireAudioSource() { stop(); }
 
 bool PipeWireAudioSource::start(std::string& err) {
-    if (fmt_.sample_rate < 1000 / kAudioFrameMs || fmt_.channels <= 0) {
+    if (fmt_.sample_rate < 1000 / kAudioFrameMs || fmt_.channels <= 0 || fmt_.channels > 2 || fmt_.sample_rate > 192000) {
         err = "invalid audio format";
         return false;
     }
+    ready_ = false;
+    failed_ = false;
     buffer_.assign(
         static_cast<std::size_t>(fmt_.sample_rate / 20) * fmt_.channels, 0);
     read_pos_ = buffered_samples_ = 0;
@@ -94,29 +97,21 @@ bool PipeWireAudioSource::start(std::string& err) {
     }
 
     stream_ = pw_stream_new(core_, "metashare-audio", props);
+    if (!stream_) { pw_thread_loop_unlock(loop_); err="pw_stream_new failed"; return false; }
     pw_stream_add_listener(stream_, &stream_listener_, &kStreamEvents, this);
 
-    // Negotiate signed-16 interleaved stereo @ fmt_.sample_rate. S16 is what
-    // the Opus path consumes with the fewest copies.
+    // Request the exact PCM layout consumed by AudioEncoder. A negotiable
+    // 1..8 channel range would make stereo sample interpretation unsafe.
     std::uint8_t pod_buf[1024];
     struct spa_pod_builder b = SPA_POD_BUILDER_INIT(pod_buf, sizeof(pod_buf));
-    const std::uint32_t rate = static_cast<std::uint32_t>(fmt_.sample_rate);
-    const std::uint32_t chans = static_cast<std::uint32_t>(fmt_.channels);
-    auto rate_choice = SPA_FRACTION(rate, 1);
-    auto rate_min = SPA_FRACTION(1, 1);
-    auto rate_max = SPA_FRACTION(192'000, 1);
-    const spa_pod* params[1];
-    params[0] = reinterpret_cast<const spa_pod*>(spa_pod_builder_add_object(
-        &b, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat, SPA_FORMAT_mediaType,
-        SPA_POD_Id(SPA_MEDIA_TYPE_audio), SPA_FORMAT_mediaSubtype,
-        SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw), SPA_FORMAT_AUDIO_format,
-        SPA_POD_CHOICE_ENUM_Id(2, SPA_AUDIO_FORMAT_S16, SPA_AUDIO_FORMAT_S16),
-        SPA_FORMAT_AUDIO_rate,
-        SPA_POD_CHOICE_RANGE_Fraction(&rate_choice, &rate_min, &rate_max),
-        SPA_FORMAT_AUDIO_channels, SPA_POD_CHOICE_RANGE_Int(chans, 1, 8),
-        SPA_FORMAT_AUDIO_position,
-        // Position is optional; default channel order is fine for stereo.
-        SPA_POD_CHOICE_ENUM_Id(2, SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FL)));
+    spa_audio_info_raw info{};
+    info.format = SPA_AUDIO_FORMAT_S16;
+    info.rate = static_cast<std::uint32_t>(fmt_.sample_rate);
+    info.channels = static_cast<std::uint32_t>(fmt_.channels);
+    info.position[0] = fmt_.channels == 1 ? SPA_AUDIO_CHANNEL_MONO : SPA_AUDIO_CHANNEL_FL;
+    if (fmt_.channels > 1) info.position[1] = SPA_AUDIO_CHANNEL_FR;
+    const spa_pod* params[] = {spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &info)};
+    running_ = true;
 
     // PW_KEY_TARGET_OBJECT set to empty -> PipeWire picks the default sink's
     // monitor (or default source) via the session manager.
@@ -130,11 +125,28 @@ bool PipeWireAudioSource::start(std::string& err) {
     }
     pw_thread_loop_unlock(loop_);
 
-    running_ = true;
+    for (int i = 0; i < 200 && !ready_ && !failed_; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (failed_ || !ready_) {
+        running_ = false;
+        err = failed_ ? "PipeWire audio stream failed during startup" : "PipeWire audio negotiation timed out";
+        return false;
+    }
     std::fprintf(stderr, "[pw-audio] %s capture started (%dch @ %d Hz)\n",
                  mode_ == Mode::kSystemSinkMonitor ? "system-output" : "mic",
                  fmt_.channels, fmt_.sample_rate);
     return true;
+}
+
+void PipeWireAudioSource::on_state_changed(int old_state, int state) {
+    if (state == PW_STREAM_STATE_PAUSED || state == PW_STREAM_STATE_STREAMING)
+        ready_ = true;
+    if (state == PW_STREAM_STATE_ERROR ||
+        (state == PW_STREAM_STATE_UNCONNECTED && old_state != PW_STREAM_STATE_UNCONNECTED)) {
+        failed_ = true;
+        running_ = false;
+        cv_.notify_all();
+    }
 }
 
 void PipeWireAudioSource::stop() {
@@ -146,11 +158,11 @@ void PipeWireAudioSource::stop() {
         pw_stream_destroy(stream_);
         stream_ = nullptr;
     }
-    if (loop_) pw_thread_loop_unlock(loop_);
     if (core_) {
         pw_core_disconnect(core_);
         core_ = nullptr;
     }
+    if (loop_) pw_thread_loop_unlock(loop_);
     if (loop_) pw_thread_loop_stop(loop_);
     if (context_) {
         pw_context_destroy(context_);
@@ -177,7 +189,9 @@ void PipeWireAudioSource::on_process() {
 
     // Interleaved S16 has a single datas[0] plane.
     const spa_data& d = sbuf->datas[0];
-    if (!d.data || d.chunk->size == 0) {
+    if (!d.data || !d.chunk || d.chunk->size == 0 ||
+        (d.chunk->flags & SPA_CHUNK_FLAG_CORRUPTED) || d.chunk->offset > d.maxsize ||
+        d.chunk->size > d.maxsize - d.chunk->offset || d.chunk->offset % sizeof(std::int16_t)) {
         pw_stream_queue_buffer(stream_, b);
         return;
     }
@@ -194,6 +208,7 @@ void PipeWireAudioSource::on_process() {
     {
         std::lock_guard<std::mutex> lk(mu_);
         const std::size_t capacity = buffer_.size();
+        if (!capacity) { pw_stream_queue_buffer(stream_, b); return; }
         if (n_samples > capacity) {
             src += n_samples - capacity;
             n_samples = capacity;

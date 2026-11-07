@@ -44,6 +44,7 @@ struct PortalState {
     // Kept alive for the session's lifetime so remote-input Notify* calls can
     // reuse it (creating a proxy per pointer move would be absurd).
     std::unique_ptr<sdbus::IProxy> portal;
+    std::unique_ptr<sdbus::IProxy> session;
     std::string session_handle;
 };
 
@@ -80,48 +81,60 @@ using VarMap = std::map<std::string, sdbus::Variant>;
 // failure or non-zero portal response code.
 bool portal_request(sdbus::IConnection& conn, const std::string& unique_name,
                     VarMap options, const std::function<void(VarMap&)>& invoke,
-                    VarMap& results, std::string& err, int timeout_s = 120) {
+                    VarMap& results, std::string& err,
+                    const std::function<bool()>& cancelled,
+                    bool* unsupported_api = nullptr, int timeout_s = 120) {
+    if (unsupported_api) *unsupported_api = false;
     const std::string token = random_token("ms");
     const std::string rpath = request_path(unique_name, token);
     options["handle_token"] = sdbus::Variant(token);
 
     auto req = sdbus::createProxy(conn, std::string{kPortalService}, rpath);
 
-    std::mutex m;
-    std::condition_variable cv;
-    bool done = false;
-    std::uint32_t code = 0;
-    VarMap out;
-
+    // The signal handler may finish after cancellation/unregistration. Own its
+    // state independently instead of referring to stack locals being destroyed.
+    struct Response {
+        std::mutex mu;
+        std::condition_variable cv;
+        bool done = false;
+        std::uint32_t code = 0;
+        VarMap values;
+    };
+    auto response = std::make_shared<Response>();
     req->uponSignal("Response")
         .onInterface(kRequestIface)
-        .call([&](const std::uint32_t& response, const VarMap& r) {
-            std::lock_guard<std::mutex> lk(m);
-            code = response;
-            out = r;
-            done = true;
-            cv.notify_all();
+        .call([response](const std::uint32_t& code, const VarMap& values) {
+            std::lock_guard<std::mutex> lock(response->mu);
+            response->code = code;
+            response->values = values;
+            response->done = true;
+            response->cv.notify_all();
         });
     req->finishRegistration();
-
     try {
         invoke(options);
     } catch (const sdbus::Error& e) {
         err = std::string("portal call failed: ") + e.what();
+        if (unsupported_api) *unsupported_api = portal_remote_desktop_unavailable(e.getName());
         return false;
     }
-
-    std::unique_lock<std::mutex> lk(m);
-    if (!cv.wait_for(lk, std::chrono::seconds(timeout_s),
-                     [&] { return done; })) {
-        err = "portal request timed out";
+    std::unique_lock<std::mutex> lock(response->mu);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_s);
+    while (!response->done) {
+        if ((cancelled && cancelled()) || std::chrono::steady_clock::now() >= deadline) {
+            err = cancelled && cancelled() ? "portal request cancelled" : "portal request timed out";
+            lock.unlock();
+            try { req->callMethod("Close").onInterface(kRequestIface).dontExpectReply(); }
+            catch (const sdbus::Error&) { /* Session connection teardown also closes requests. */ }
+            return false;
+        }
+        response->cv.wait_for(lock, std::chrono::milliseconds(100));
+    }
+    if (response->code != 0) {
+        err = "portal request rejected (code " + std::to_string(response->code) + ")";
         return false;
     }
-    if (code != 0) {
-        err = "portal request rejected (code " + std::to_string(code) + ")";
-        return false;
-    }
-    results = std::move(out);
+    results = std::move(response->values);
     return true;
 }
 
@@ -129,19 +142,21 @@ bool portal_request(sdbus::IConnection& conn, const std::string& unique_name,
 
 bool PortalPipeWireSource::run_portal(int& pw_fd, std::uint32_t& node_id,
                                       std::string& err) {
+    if (opts_.cancel_requested && opts_.cancel_requested()) { err="portal request cancelled"; return false; }
     if (opts_.enable_input) {
         // Try the combined RemoteDesktop+ScreenCast session first — same
-        // capture, plus input injection. Portals without RemoteDesktop (or a
-        // user denying the extra permission) drop us to capture-only below.
+        // capture, plus input injection. Only an explicitly unavailable API
+        // can fall back. A user cancellation/denial must never open a second picker.
         std::string input_err;
         if (run_portal_session(true, pw_fd, node_id, input_err)) {
-            input_ready_ = true;
-            std::fprintf(stderr,
-                         "[portal] remote input enabled (RemoteDesktop "
-                         "session, stream node %u)\n",
-                         node_id);
+            if (input_ready_)
+                std::fprintf(stderr, "[portal] pointer and keyboard granted (stream node %u)\n", node_id);
+            else
+                std::fprintf(stderr, "[portal] complete input permission not granted; keeping this capture session view-only\n");
             return true;
         }
+        if (opts_.cancel_requested && opts_.cancel_requested()) { err="portal request cancelled"; return false; }
+        if (!remote_desktop_unavailable_) { err = input_err; return false; }
         std::fprintf(stderr,
                      "[portal] RemoteDesktop session unavailable (%s) — "
                      "falling back to capture-only\n",
@@ -155,6 +170,9 @@ bool PortalPipeWireSource::run_portal_session(bool with_input, int& pw_fd,
                                               std::uint32_t& node_id,
                                               std::string& err) {
     portal_ = std::make_unique<PortalState>();
+    ended_ = false;
+    input_ready_ = false;
+    remote_desktop_unavailable_ = false;
 
     // The portal source requires a D-Bus session bus (it talks to
     // xdg-desktop-portal over it). Pre-flight the env so we can give an
@@ -210,7 +228,8 @@ bool PortalPipeWireSource::run_portal_session(bool with_input, int& pw_fd,
                 .withArguments(options)
                 .storeResultsTo(handle);
         };
-        if (!portal_request(conn, unique, opts, call, res, err)) return false;
+        if (!portal_request(conn, unique, opts, call, res, err, opts_.cancel_requested,
+                            with_input ? &remote_desktop_unavailable_ : nullptr)) return false;
         auto it = res.find("session_handle");
         if (it == res.end()) {
             err = "portal: no session_handle in response";
@@ -219,6 +238,11 @@ bool PortalPipeWireSource::run_portal_session(bool with_input, int& pw_fd,
         portal_->session_handle = it->second.get<std::string>();
     }
 
+    portal_->session = sdbus::createProxy(conn, std::string{kPortalService}, portal_->session_handle);
+    portal_->session->uponSignal("Closed")
+        .onInterface("org.freedesktop.portal.Session")
+        .call([this](const VarMap&) { on_stream_ended(); });
+    portal_->session->finishRegistration();
     const sdbus::ObjectPath session{portal_->session_handle};
 
     // 1b) SelectDevices — ask for keyboard (1) + pointer (2) injection.
@@ -233,7 +257,7 @@ bool PortalPipeWireSource::run_portal_session(bool with_input, int& pw_fd,
                 .withArguments(session, options)
                 .storeResultsTo(handle);
         };
-        if (!portal_request(conn, unique, opts, call, res, err)) return false;
+        if (!portal_request(conn, unique, opts, call, res, err, opts_.cancel_requested, &remote_desktop_unavailable_)) return false;
     }
 
     // 2) SelectSources — configurable via opts_. Default is MONITOR + single +
@@ -255,7 +279,7 @@ bool PortalPipeWireSource::run_portal_session(bool with_input, int& pw_fd,
                 .withArguments(session, options)
                 .storeResultsTo(handle);
         };
-        if (!portal_request(conn, unique, opts, call, res, err)) return false;
+        if (!portal_request(conn, unique, opts, call, res, err, opts_.cancel_requested)) return false;
     }
 
     // 3) Start — shows the picker dialog; user chooses a monitor. On a
@@ -271,8 +295,20 @@ bool PortalPipeWireSource::run_portal_session(bool with_input, int& pw_fd,
                 .withArguments(session, std::string{""}, options)
                 .storeResultsTo(handle);
         };
-        if (!portal_request(conn, unique, opts, call, start_res, err))
+        if (!portal_request(conn, unique, opts, call, start_res, err, opts_.cancel_requested,
+                            with_input ? &remote_desktop_unavailable_ : nullptr))
             return false;
+    }
+
+    // org.freedesktop.portal.RemoteDesktop.Start::devices is the user's
+    // granted device mask. Missing, malformed or partial grants stay view-only
+    // in this same session; do not open another picker to seek more permission.
+    bool complete_input_grant = false;
+    if (with_input) {
+        const auto granted = start_res.find("devices");
+        complete_input_grant = granted != start_res.end() &&
+            granted->second.containsValueOfType<std::uint32_t>() &&
+            portal_grants_complete_input(granted->second.get<std::uint32_t>());
     }
 
     // streams: a(ua{sv}) — pick the first node id.
@@ -311,6 +347,7 @@ bool PortalPipeWireSource::run_portal_session(bool with_input, int& pw_fd,
             return false;
         }
     }
+    input_ready_ = complete_input_grant && !ended_;
     return true;
 }
 
@@ -332,9 +369,9 @@ void PortalPipeWireSource::input_error(const char* what) {
         std::fprintf(stderr, "[portal] input injection error: %s\n", what);
     if (n == 16) {
         std::fprintf(stderr,
-                     "[portal] repeated injection errors — remote input "
-                     "disabled\n");
-        input_ready_ = false;
+                     "[portal] repeated injection errors — ending session "
+                     "to release virtual input devices\n");
+        on_stream_ended();
     }
 }
 
@@ -429,6 +466,9 @@ void cb_state_changed(void* data, enum pw_stream_state old,
     std::fprintf(stderr, "[pipewire] state: %s%s%s\n",
                  pw_stream_state_as_string(state), error ? " - " : "",
                  error ? error : "");
+    if (state == PW_STREAM_STATE_ERROR ||
+        (state == PW_STREAM_STATE_UNCONNECTED && old != PW_STREAM_STATE_UNCONNECTED))
+        static_cast<PortalPipeWireSource*>(data)->on_stream_ended();
 }
 
 static struct pw_stream_events kStreamEvents = {
@@ -452,9 +492,10 @@ void PortalPipeWireSource::on_param_changed(const struct spa_pod* param) {
     const int w = info.info.raw.size.width;
     const int h = info.info.raw.size.height;
     const int new_fmt = spa_to_av(info.info.raw.format);
-    if (new_fmt == AV_PIX_FMT_NONE) {
+    if (new_fmt == AV_PIX_FMT_NONE || w < 1 || h < 1 || w > 8192 || h > 8192) {
         std::fprintf(stderr, "[pipewire] unsupported format %u\n",
                      info.info.raw.format);
+        on_stream_ended();
         return;
     }
 
@@ -477,13 +518,15 @@ void PortalPipeWireSource::on_param_changed(const struct spa_pod* param) {
         std::lock_guard<std::mutex> lk(mu_);
         fmt_.width = w;
         fmt_.height = h;
+        have_new_ = false;
         for (AVFrame** f : {&front_, &back_}) {
             if (*f) av_frame_free(f);
             *f = av_frame_alloc();
+            if (!*f) { on_stream_ended(); return; }
             (*f)->format = negotiated_fmt_;
             (*f)->width = w;
             (*f)->height = h;
-            av_frame_get_buffer(*f, 32);
+            if (av_frame_get_buffer(*f, 32) < 0) { on_stream_ended(); return; }
         }
     }
     std::fprintf(stderr, "[pipewire] negotiated %dx%d fmt=%d\n", w, h,
@@ -501,7 +544,7 @@ reply_params:;
         SPA_PARAM_BUFFERS_dataType,
         SPA_POD_CHOICE_FLAGS_Int((1 << SPA_DATA_MemPtr) |
                                  (1 << SPA_DATA_MemFd))));
-    pw_stream_update_params(stream_, params, 1);
+    if (stream_) pw_stream_update_params(stream_, params, 1);
 }
 
 void PortalPipeWireSource::on_process() {
@@ -512,13 +555,20 @@ void PortalPipeWireSource::on_process() {
         std::lock_guard<std::mutex> lk(mu_);
         if (back_ && av_frame_make_writable(back_) >= 0) {
             const auto& d = sbuf->datas[0];
-            const int src_stride =
-                d.chunk->stride ? d.chunk->stride : back_->linesize[0];
-            const auto* src =
-                static_cast<const std::uint8_t*>(d.data) + d.chunk->offset;
-            av_image_copy_plane(
-                back_->data[0], back_->linesize[0], src, src_stride,
-                std::min(src_stride, back_->linesize[0]), back_->height);
+            if (!d.chunk || (d.chunk->flags & SPA_CHUNK_FLAG_CORRUPTED)) {
+                pw_stream_queue_buffer(stream_, b); return;
+            }
+            const std::size_t row_bytes = static_cast<std::size_t>(back_->width) * 4;
+            const int src_stride = d.chunk->stride ? d.chunk->stride : static_cast<int>(row_bytes);
+            if (src_stride < 0 || static_cast<std::size_t>(src_stride) < row_bytes ||
+                d.chunk->offset > d.maxsize || d.chunk->size > d.maxsize - d.chunk->offset) {
+                pw_stream_queue_buffer(stream_, b); return;
+            }
+            const std::uint64_t required = static_cast<std::uint64_t>(back_->height - 1) * src_stride + row_bytes;
+            if (required > d.chunk->size) { pw_stream_queue_buffer(stream_, b); return; }
+            const auto* src = static_cast<const std::uint8_t*>(d.data) + d.chunk->offset;
+            av_image_copy_plane(back_->data[0], back_->linesize[0], src,
+                                src_stride, static_cast<int>(row_bytes), back_->height);
             const auto now =
                 std::chrono::steady_clock::now().time_since_epoch();
             pts_usec_ =
@@ -585,6 +635,7 @@ bool PortalPipeWireSource::start(std::string& err) {
         pw_properties_new(PW_KEY_MEDIA_TYPE, "Video", PW_KEY_MEDIA_CATEGORY,
                           "Capture", PW_KEY_MEDIA_ROLE, "Screen", nullptr);
     stream_ = pw_stream_new(core_, "metashare-capture", props);
+    if (!stream_) { pw_thread_loop_unlock(loop_); err="pw_stream_new failed"; return false; }
 
     pw_stream_add_listener(stream_, &stream_listener_, &kStreamEvents, this);
 
@@ -621,28 +672,41 @@ bool PortalPipeWireSource::start(std::string& err) {
     pw_thread_loop_unlock(loop_);
     running_ = true;
 
-    // Wait (briefly) for format negotiation so format() is valid on return.
-    for (int i = 0; i < 200 && fmt_.width == 0; ++i)
+    // Wait for negotiated dimensions under the same mutex used by PipeWire.
+    for (int i = 0; i < 200 && !ended_ && format().width == 0; ++i) {
+        if (opts_.cancel_requested && opts_.cancel_requested()) {
+            err = "portal request cancelled"; return false;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    if (fmt_.width == 0) {
+    }
+    if (ended_) { running_=false; err="portal capture ended during startup"; return false; }
+    if (format().width == 0) {
         err = "timed out waiting for PipeWire format negotiation";
         return false;
     }
     return true;
 }
 
+void PortalPipeWireSource::on_stream_ended() {
+    ended_ = true;
+    running_ = false;
+    input_ready_ = false;
+    cv_.notify_all();
+}
+
 void PortalPipeWireSource::stop() {
     running_ = false;
+    cv_.notify_all();
     if (loop_) pw_thread_loop_lock(loop_);
     if (stream_) {
         pw_stream_destroy(stream_);
         stream_ = nullptr;
     }
-    if (loop_) pw_thread_loop_unlock(loop_);
     if (core_) {
         pw_core_disconnect(core_);
         core_ = nullptr;
     }
+    if (loop_) pw_thread_loop_unlock(loop_);
     if (loop_) { pw_thread_loop_stop(loop_); }
     if (context_) {
         pw_context_destroy(context_);
@@ -675,13 +739,14 @@ int PortalPipeWireSource::deliver_front_locked(AVFrame** out,
         out_->height != front_->height || out_->format != front_->format) {
         if (out_) av_frame_free(&out_);
         out_ = av_frame_alloc();
-        if (!out_) return 0;
+        if (!out_) { on_stream_ended(); return -1; }
         out_->format = front_->format;
         out_->width = front_->width;
         out_->height = front_->height;
         if (av_frame_get_buffer(out_, 32) < 0) {
             av_frame_free(&out_);
-            return 0;
+            on_stream_ended();
+            return -1;
         }
     }
     std::swap(out_, front_);
@@ -695,14 +760,14 @@ int PortalPipeWireSource::next_frame(AVFrame** out, std::int64_t& pts_usec) {
     if (!cv_.wait_for(lk, std::chrono::milliseconds(500),
                       [&] { return have_new_ || !running_; }))
         return 0;
-    if (!running_) return -1;
+    if (!running_ || ended_) return -1;
     have_new_ = false;
     return deliver_front_locked(out, pts_usec);
 }
 
 int PortalPipeWireSource::latest_frame(AVFrame** out, std::int64_t& pts_usec) {
     std::lock_guard<std::mutex> lk(mu_);
-    if (!running_) return -1;
+    if (!running_ || ended_) return -1;
     // No wait: if nothing has been captured since the last pull, tell the
     // caller to re-encode its previous frame. This is what decouples the encode
     // cadence from the compositor's bursty delivery — the caller ticks on its

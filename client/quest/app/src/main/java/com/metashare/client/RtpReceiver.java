@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Receives raw RTP (H.265/H.264 video + Opus audio) over UDP, demultiplexes by
+ * Authenticates/decrypts Metuxa UDP envelopes before receiving RTP, demultiplexes by
  * SSRC, reassembles Annex B video frames and hands them to a {@link VideoSink};
  * Opus packets go straight to an {@link AudioSink}.
  *
@@ -50,6 +50,7 @@ public final class RtpReceiver {
     private static final int NACK_MAX_GAP = 256;
     private static final long RR_INTERVAL_MS = 1000;  // receiver report cadence
 
+    private final Object sinkLock=new Object();
     private final VideoSink videoSink;
     private final AudioSink audioSink;
 
@@ -62,12 +63,13 @@ public final class RtpReceiver {
     private int audioPt = 111;
     private int audioClockRate = 48000;
 
-    private DatagramSocket socket;
+    private volatile DatagramSocket socket;
+    private SecureTransport.MediaCipher decryptor, encryptor;
     private int localPort = -1;
     private volatile boolean running;
     private Thread thread;
 
-    // Remote endpoint, learned from the first RTP packet (where NACKs/PLI go).
+    // Remote endpoint provided by the authenticated TLS HELLO, never learned from UDP.
     private volatile InetAddress remoteAddress;
     private volatile int remotePort = -1;
     // Keyframe request issued before the remote endpoint is known; serviced as
@@ -88,8 +90,8 @@ public final class RtpReceiver {
     private long lastRrMs = 0;
 
     public RtpReceiver(VideoSink videoSink, AudioSink audioSink) {
-        this.videoSink = videoSink;
-        this.audioSink = audioSink;
+        this.videoSink = (data,pts,keyframe)-> { synchronized(sinkLock) { if(running) videoSink.onFrame(data,pts,keyframe); } };
+        this.audioSink = audioSink==null ? null : (data,offset,length,pts)-> { synchronized(sinkLock) { if(running) audioSink.onOpusPacket(data,offset,length,pts); } };
     }
 
     public void configure(int videoSsrc, int videoPt, String videoCodec,
@@ -104,11 +106,22 @@ public final class RtpReceiver {
         this.audioClockRate = audioClockRate;
     }
 
+    public void configureSecurity(InetAddress host, int port, SecureTransport.MediaCipher decryptor,
+                                  SecureTransport.MediaCipher encryptor) {
+        if (running || port < 1 || port > 65535 || host == null || decryptor == null || encryptor == null)
+            throw new IllegalArgumentException("Invalid secure media endpoint");
+        this.remoteAddress=host; this.remotePort=port;
+        this.decryptor=decryptor; this.encryptor=encryptor;
+    }
+
     /** Bind to localPort (0 = ephemeral) and start receiving. */
     public void start(int localPort) throws Exception {
+        if (decryptor == null || encryptor == null || remoteAddress == null)
+            throw new IllegalStateException("Encrypted media required");
         socket = new DatagramSocket(null);
         socket.setReuseAddress(true);
         socket.bind(new InetSocketAddress(localPort));
+        socket.connect(remoteAddress, remotePort);
         socket.setSoTimeout(10);  // service gap expiry even when RTP goes idle
         // Large frames (4K) produce 100+ RTP packet bursts; the default
         // ~208 KB kernel buffer overflows during these bursts.
@@ -125,14 +138,31 @@ public final class RtpReceiver {
 
     public void stop() {
         running = false;
-        if (socket != null) {
-            socket.close();
-            socket = null;
+        DatagramSocket old=socket; socket=null;
+        if (old != null) old.close();
+        Thread oldThread=thread; thread=null;
+        if(oldThread!=null && oldThread!=Thread.currentThread()) {
+            oldThread.interrupt();
+            joinForCleanup(oldThread,1000);
         }
-        if (thread != null) {
-            thread.interrupt();
-            thread = null;
-        }
+        // Even if the receive thread is slow to exit, no decoder callback can
+        // overlap decoder destruction after this barrier.
+        synchronized(sinkLock) { /* wait for the current sink call */ }
+        if(decryptor!=null) decryptor.close();
+        if(encryptor!=null) encryptor.close();
+    }
+
+    static void joinForCleanup(Thread thread,long timeoutMs) {
+        boolean interrupted=Thread.interrupted();
+        final long deadline=System.nanoTime()+timeoutMs*1_000_000L;
+        try {
+            while(thread.isAlive()) {
+                long remaining=deadline-System.nanoTime();
+                if(remaining<=0) break;
+                try { thread.join(Math.max(1,remaining/1_000_000L)); }
+                catch(InterruptedException cancelled) { interrupted=true; }
+            }
+        } finally { if(interrupted) Thread.currentThread().interrupt(); }
     }
 
     /** Send a PLI so the streamer emits a keyframe (e.g. right after START). */
@@ -207,19 +237,11 @@ public final class RtpReceiver {
                 Log.w(TAG, "receive error: " + e.getMessage());
                 continue;
             }
-            if (n < 12) continue;
-
-            if (remoteAddress == null) {
-                remoteAddress = pkt.getAddress();
-                remotePort = pkt.getPort();
-                if (pliPending) {
-                    pliPending = false;
-                    sendPli();
-                }
-            }
-
-            byte[] data = pkt.getData();
-            int off = pkt.getOffset();
+            if (!pkt.getAddress().equals(remoteAddress) || pkt.getPort()!=remotePort) continue;
+            byte[] data=decryptor.open(pkt.getData(),pkt.getOffset(),n);
+            if(data==null || data.length<12) continue;
+            n=data.length;
+            int off=0;
             if (((data[off] >>> 6) & 0x3) != 2) continue;
             boolean marker = (data[off + 1] & 0x80) != 0;
             int pt = data[off + 1] & 0x7F;
@@ -298,7 +320,7 @@ public final class RtpReceiver {
                     jitter.put(ext, new HeldVideo(payload, payloadLen, marker, ts));
                 }
 
-            } else if (ssrc == audioSsrc && pt == audioPt) {
+            } else if (audioSink != null && ssrc == audioSsrc && pt == audioPt) {
                 long ptsUsec = ts * 1_000_000L / audioClockRate;
                 audioSink.onOpusPacket(data, payloadOff, payloadLen, ptsUsec);
             }
@@ -319,6 +341,13 @@ public final class RtpReceiver {
             this.marker = marker;
             this.ts = ts;
         }
+    }
+
+    private void sendSecure(byte[] plain) throws Exception {
+        DatagramSocket current=socket;
+        if(current==null || !running) return;
+        byte[] sealed=encryptor.seal(plain);
+        current.send(new DatagramPacket(sealed,sealed.length,remoteAddress,remotePort));
     }
 
     // ------------------------------------------------------------------- NACK
@@ -356,7 +385,7 @@ public final class RtpReceiver {
             nack[14] = (byte) (blp >>> 8);
             nack[15] = (byte) blp;
             try {
-                socket.send(new DatagramPacket(nack, nack.length, addr, port));
+                sendSecure(nack);
             } catch (Exception e) {
                 break;
             }
@@ -418,7 +447,7 @@ public final class RtpReceiver {
         rr[19] = (byte) extHigh;
         // bytes 20..23 interarrival jitter, 24..27 LSR, 28..31 DLSR: zero.
         try {
-            socket.send(new DatagramPacket(rr, rr.length, addr, port));
+            sendSecure(rr);
         } catch (Exception e) {
             Log.w(TAG, "RR send failed: " + e.getMessage());
         }
@@ -441,7 +470,7 @@ public final class RtpReceiver {
         pli[10] = (byte) (videoSsrc >>> 8);
         pli[11] = (byte) videoSsrc;
         try {
-            socket.send(new DatagramPacket(pli, pli.length, addr, port));
+            sendSecure(pli);
         } catch (Exception e) {
             Log.w(TAG, "PLI send failed: " + e.getMessage());
         }

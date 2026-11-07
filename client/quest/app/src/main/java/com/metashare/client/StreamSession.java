@@ -1,494 +1,271 @@
 package com.metashare.client;
 
 import android.content.Context;
-import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceView;
-
 import org.json.JSONObject;
-
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.InterfaceAddress;
-import java.net.NetworkInterface;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
-import java.util.Collections;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
+import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLSocket;
 
-/**
- * Streams one monitor from a MetaShare streamer over raw RTP (H.265/H.264 video
- * + Opus audio). A tiny TCP signaling protocol bootstraps the session:
- *
- * <pre>
- *   server -> client: HELLO {json stream params}
- *   client -> server: READY {"port": <client udp port>}
- *   server -> client: START
- *   ... raw RTP over UDP ...
- *   either        : BYE
- * </pre>
- *
- * <p>Discovery (UDP broadcast) is unchanged: probe, receive an offer with the
- * host's signaling port, connect, then render.
- *
- * <p>Video decoding is native MediaCodec (hardware H.265 on Quest 3) rendering
- * straight to the supplied {@link SurfaceView}'s Surface — no libwebrtc, no EGL.
- */
+/** One explicitly selected, pinned Metuxa host. Never auto-trusts discovery. */
 public final class StreamSession {
-
-    private static final String TAG = "StreamSession";
-
-    private static final byte[] DISCOVERY_MAGIC =
-            new byte[] {'M', 'S', 'H', 'A', 'R', 'E', 'D', '1'};
-    private static final int DISCOVERY_PORT = 7777;
-    private static final int PROTOCOL_VERSION = 4;
-
-    /** Callbacks delivered on the main thread. */
+    private static final String TAG="StreamSession";
     public interface Listener {
         void onStatus(String text);
-        void onStreamSize(int width, int height);
+        void onStreamSize(int width,int height);
         void onAvailableMonitors(int count);
+        default void onConnected() {}
+        default void onDisconnected() {}
+        default void onInputCapability(boolean available) {}
     }
-
-    private final Context context;
     private volatile SurfaceView surfaceView;
     private final int monitorIndex;
     private final Listener listener;
-    private final Handler main = new Handler(Looper.getMainLooper());
-
+    private final Handler main=new Handler(Looper.getMainLooper());
     private volatile boolean running;
     private Thread worker;
-    private DatagramSocket discoverySocket;
-    private Socket signalingSocket;
-    // The current session's video decoder, exposed so setRenderer() can rebind
-    // it to a recreated surface without tearing the session (and RTP) down.
+    private volatile Socket signalingSocket;
     private volatile VideoDecoder videoDecoder;
-
-    // Remote-input back-channel: UI threads enqueue wire lines here and a
-    // per-session sender thread writes them to the signaling socket, so a
-    // stalled link can never jank the UI. Guarded by its own monitor.
-    private final ArrayDeque<String> inputQueue = new ArrayDeque<>();
+    private final ArrayDeque<String> inputQueue=new ArrayDeque<>();
     private volatile boolean inputOpen;
-    private static final int INPUT_QUEUE_CAP = 512;
+    private static final int INPUT_QUEUE_CAP=512;
+    private String host,fingerprint,pairingToken;
+    private int basePort;
+    private boolean audioEnabled;
 
-    public StreamSession(Context context, SurfaceView surfaceView,
-                         int monitorIndex, Listener listener) {
-        this.context = context;
-        this.surfaceView = surfaceView;
-        this.monitorIndex = monitorIndex;
-        this.listener = listener;
+    public StreamSession(Context context,SurfaceView surfaceView,int monitorIndex,Listener listener) {
+        this.surfaceView=surfaceView; this.monitorIndex=monitorIndex; this.listener=listener;
     }
-
-    /**
-     * Swap the render target after a surface recreation. The Quest destroys and
-     * recreates a SurfaceView's surface during normal panel churn; the old
-     * Surface then goes invalid and the codec bound to it errors. Rebind the live
-     * decoder onto the new surface so the session (and its RTP link) keep running
-     * instead of the decoder wedging on a dead surface.
-     */
-    public void setRenderer(SurfaceView surfaceView) {
-        this.surfaceView = surfaceView;
-        VideoDecoder d = videoDecoder;
-        if (d != null && surfaceView != null) {
-            Surface s = surfaceView.getHolder().getSurface();
-            if (s != null && s.isValid()) d.setSurface(s);
+    public synchronized void configure(String host,int basePort,String fingerprint,String pairingToken,boolean audioEnabled) {
+        if(worker!=null) throw new IllegalStateException("Stop the session before changing its server");
+        if(host==null || host.trim().isEmpty() || basePort<1 || monitorIndex<0 || basePort+monitorIndex>65535)
+            throw new IllegalArgumentException("Invalid server endpoint");
+        SecureTransport.unhex(fingerprint,32); SecureTransport.unhex(pairingToken,16);
+        this.host=host.trim(); this.basePort=basePort; this.fingerprint=fingerprint;
+        this.pairingToken=pairingToken; this.audioEnabled=audioEnabled && monitorIndex==0;
+    }
+    public void setRenderer(SurfaceView view) {
+        surfaceView=view;
+        VideoDecoder decoder=videoDecoder;
+        if(decoder!=null && view!=null) {
+            Surface surface=view.getHolder().getSurface();
+            if(surface!=null && surface.isValid()) decoder.setSurface(surface);
         }
     }
-
     public synchronized void start() {
-        if (running) return;
-        running = true;
-        worker = new Thread(this::runLoop, "MetaShareStream");
-        worker.start();
+        if(worker!=null) return;
+        if(host==null) { postStatus("Select and pair a server before connecting"); return; }
+        running=true;
+        worker=new Thread(this::runLoop,"MetuxaStream-"+monitorIndex); worker.start();
     }
-
     public synchronized void stop() {
-        running = false;
-        closeDiscoverySocket();
+        running=false; inputOpen=false;
+        synchronized(inputQueue) { inputQueue.clear(); inputQueue.notifyAll(); }
         closeSignalingSocket();
-        if (worker != null) {
-            worker.interrupt();
-            worker = null;
-        }
+        if(worker!=null) worker.interrupt();
     }
-
-    // ---------------------------------------------------------- remote input
-
-    /** Absolute pointer position, normalized 0..1 in the streamed surface. */
-    public void sendPointerMove(float x, float y) {
-        enqueueInput(String.format(Locale.US, "m %.4f %.4f", x, y));
+    public void sendPointerMove(float x,float y) {
+        if(!Float.isFinite(x) || !Float.isFinite(y)) return;
+        enqueueInput(String.format(Locale.US,"m %.4f %.4f",Math.max(0,Math.min(1,x)),Math.max(0,Math.min(1,y))));
     }
-
-    /** Pointer button by Linux evdev code (BTN_LEFT=272/RIGHT=273/MIDDLE=274). */
-    public void sendPointerButton(int evdevButton, boolean pressed) {
-        enqueueInput("b " + evdevButton + (pressed ? " 1" : " 0"));
-    }
-
-    /** Discrete scroll steps; positive = down / right. */
-    public void sendScroll(int vSteps, int hSteps) {
-        enqueueInput("s " + vSteps + " " + hSteps);
-    }
-
-    /** One key transition as an X11 keysym (see {@link Keysyms}). */
-    public void sendKey(int keysym, boolean pressed) {
-        enqueueInput("k " + keysym + (pressed ? " 1" : " 0"));
-    }
-
-    private void enqueueInput(String body) {
-        if (!inputOpen) return;  // dropped until the stream is up
-        String line = "INPUT " + body;
-        synchronized (inputQueue) {
-            // Coalesce bursts of pointer moves: only the newest position
-            // matters, and this keeps a slow link from queueing stale motion.
-            if (body.charAt(0) == 'm' && !inputQueue.isEmpty()
-                    && inputQueue.peekLast().startsWith("INPUT m ")) {
-                inputQueue.pollLast();
-            }
-            inputQueue.addLast(line);
-            if (inputQueue.size() > INPUT_QUEUE_CAP) inputQueue.pollFirst();
+    public void sendPointerButton(int button,boolean pressed) { enqueueInput("b "+button+(pressed?" 1":" 0")); }
+    public void sendScroll(int vertical,int horizontal) { enqueueInput("s "+vertical+" "+horizontal); }
+    public void sendKey(int keysym,boolean pressed) { enqueueInput("k "+keysym+(pressed?" 1":" 0")); }
+    /** Server-side release-all, ordered ahead of any newly generated input. */
+    public void releaseAllInput() {
+        synchronized(inputQueue) {
+            inputQueue.clear();
+            if(inputOpen) inputQueue.addLast("INPUT r");
             inputQueue.notifyAll();
         }
     }
-
-    // ------------------------------------------------------------------ loop
-
+    private void enqueueInput(String body) {
+        synchronized(inputQueue) {
+            if(!inputOpen) return;
+            if(body.charAt(0)=='m' && !inputQueue.isEmpty() && inputQueue.peekLast().startsWith("INPUT m ")) inputQueue.pollLast();
+            // Never silently drop a key/button release. Resynchronize the server
+            // before the newest event instead of retaining stale held input.
+            if(inputQueue.size()>=INPUT_QUEUE_CAP) { inputQueue.clear(); inputQueue.addLast("INPUT r"); }
+            inputQueue.addLast("INPUT "+body); inputQueue.notifyAll();
+        }
+    }
     private void runLoop() {
-        WifiManager.MulticastLock multicastLock = null;
         try {
-            WifiManager wifi =
-                    (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
-            if (wifi != null) {
-                multicastLock = wifi.createMulticastLock("metashare-discovery");
-                multicastLock.setReferenceCounted(false);
-                multicastLock.acquire();
-            }
-
-            while (running) {
+            int retry=0;
+            while(running) {
                 try {
-                    postStatus("Searching for MetaShare streamer...");
-                    InetSocketAddress offer = discover(3000);
-                    if (offer == null) {
-                        sleepQuietly(1000);
-                        continue;
-                    }
-                    postStatus("Connecting to " + offer.getAddress().getHostAddress()
-                               + "...");
-                    negotiateAndRender(offer);
-                } catch (Exception e) {
-                    Log.e(TAG, "stream loop failed", e);
-                    if (running) {
-                        postStatus("Disconnected. Reconnecting...");
-                        sleepQuietly(1200);
-                    }
-                } finally {
-                    closeSignalingSocket();
+                    postStatus("Connecting securely to "+host+"…");
+                    InetAddress address=InetAddress.getByName(host);
+                    if(!running) break;
+                    negotiateAndRender(new InetSocketAddress(address,basePort+monitorIndex));
+                    retry=0;
+                } catch(SSLHandshakeException securityFailure) {
+                    if(running) postStatus("Server identity could not be verified. Check the fingerprint on the server and pair again.");
+                    running=false;
+                } catch(Exception failure) {
+                    // Never log wire content, credentials, session keys, or the
+                    // HELLO payload. Error messages from peers are untrusted.
+                    Log.w(TAG,"Secure session ended ("+failure.getClass().getSimpleName()+")");
+                    if(running) postStatus("Disconnected. Retrying the selected server…");
+                } finally { closeSignalingSocket(); }
+                if(running) {
+                    try { Thread.sleep(Math.min(5000,1000+(retry++)*500L)); }
+                    catch(InterruptedException e) { Thread.currentThread().interrupt(); break; }
                 }
             }
         } finally {
-            if (multicastLock != null && multicastLock.isHeld()) {
-                multicastLock.release();
-            }
+            running=false;
+            synchronized(this) { if(worker==Thread.currentThread()) worker=null; }
         }
     }
-
-    // ------------------------------------------------------------- discovery
-
-    private InetSocketAddress discover(int timeoutMs) throws IOException {
-        DatagramSocket socket = new DatagramSocket();
-        discoverySocket = socket;
+    private void negotiateAndRender(InetSocketAddress endpoint) throws Exception {
+        VideoDecoder decoder=null;
+        AudioDecoder audioDecoder=null;
+        RtpReceiver receiver=null;
+        Thread inputSender=null;
+        SecureTransport.MediaCipher decryptor=null,encryptor=null;
+        final AtomicBoolean sessionActive=new AtomicBoolean(true);
         try {
-            socket.setBroadcast(true);
-            socket.setSoTimeout(timeoutMs);
-
-            byte[] probe = ByteBuffer.allocate(16)
-                    .order(ByteOrder.LITTLE_ENDIAN)
-                    .put(DISCOVERY_MAGIC)
-                    .putInt(PROTOCOL_VERSION)
-                    .putInt(0)  // reserved client_caps (v4 ignores codec bits)
-                    .array();
-
-            sendProbe(socket, probe, InetAddress.getByName("255.255.255.255"));
-            sendProbe(socket, probe, InetAddress.getByName("127.0.0.1"));
-            for (NetworkInterface nif :
-                    Collections.list(NetworkInterface.getNetworkInterfaces())) {
-                if (!nif.isUp() || nif.isLoopback()) continue;
-                for (InterfaceAddress addr : nif.getInterfaceAddresses()) {
-                    InetAddress broadcast = addr.getBroadcast();
-                    if (broadcast instanceof Inet4Address) {
-                        sendProbe(socket, probe, broadcast);
-                    }
-                }
+            SSLSocket socket=SecureTransport.pinnedSocket(fingerprint);
+            signalingSocket=socket;
+            if(!running) return;
+            socket.setTcpNoDelay(true); socket.setSoTimeout(5000);
+            socket.connect(endpoint,3000); socket.startHandshake();
+            SecureTransport.LineReader sigIn=new SecureTransport.LineReader(socket.getInputStream());
+            OutputStream sigOut=socket.getOutputStream();
+            sendLine(sigOut,"AUTH "+pairingToken);
+            String helloLine=sigIn.readLine();
+            if(helloLine==null || !helloLine.startsWith("HELLO ")) {
+                postStatus("Pairing was refused. Check the current code on the server.");
+                running=false; return;
             }
-
-            byte[] offer = new byte[80];
-            DatagramPacket packet = new DatagramPacket(offer, offer.length);
-            while (running) {
+            JSONObject hello=new JSONObject(helloLine.substring(6));
+            if(hello.getInt("version")!=5) throw new IOException("Unsupported secure protocol");
+            final int monitorCount=hello.getInt("monitor_count");
+            if(monitorCount<1 || monitorCount>16) throw new IOException("Invalid monitor count");
+            main.post(()->listener.onAvailableMonitors(monitorCount));
+            JSONObject security=hello.getJSONObject("security");
+            if(security.getInt("version")!=1 || !"AES-256-GCM".equals(security.getString("cipher"))) throw new IOException("Unsupported media security");
+            decryptor=new SecureTransport.MediaCipher(security.getString("s2c_key"),security.getString("s2c_prefix"),SecureTransport.MediaCipher.SERVER);
+            encryptor=new SecureTransport.MediaCipher(security.getString("c2s_key"),security.getString("c2s_prefix"),SecureTransport.MediaCipher.CLIENT);
+            int mediaPort=hello.getInt("udp_port");
+            if(mediaPort<1 || mediaPort>65535) throw new IOException("Invalid media endpoint");
+            boolean canInput=hello.optBoolean("input",false);
+            JSONObject video=hello.getJSONObject("video");
+            String codec=video.getString("codec");
+            int width=video.getInt("width"),height=video.getInt("height"),videoSsrc=video.getInt("ssrc"),videoPt=video.getInt("pt");
+            int videoClock=video.getInt("clock");
+            if((!"h264".equals(codec) && !"h265".equals(codec)) || width<16 || width>8192 || height<16 || height>8192 || videoPt<96 || videoPt>127 || videoClock!=90000)
+                throw new IOException("Invalid video format");
+            int audioSsrc=-1,audioPt=-1,audioClock=48000;
+            if(audioEnabled && hello.has("audio")) {
+                JSONObject audio=hello.getJSONObject("audio");
+                int rate=audio.getInt("rate"),channels=audio.getInt("channels");
+                audioSsrc=audio.getInt("ssrc"); audioPt=audio.getInt("pt"); audioClock=audio.getInt("clock");
+                if(!"opus".equals(audio.getString("codec")) || rate!=48000 || audioClock!=48000 || channels<1 || channels>2 || audioPt<96 || audioPt>127)
+                    throw new IOException("Invalid audio format");
+                audioDecoder=new AudioDecoder();
+                try { audioDecoder.init(rate,channels); }
+                catch(Exception unsupportedAudio) { audioDecoder.release(); audioDecoder=null; }
+            }
+            decoder=new VideoDecoder(); videoDecoder=decoder;
+            SurfaceView view=surfaceView;
+            Surface surface=view==null?null:view.getHolder().getSurface();
+            if(surface==null || !surface.isValid()) throw new IOException("Render surface unavailable");
+            decoder.init(surface,codec,width,height,new VideoDecoder.Listener() {
+                @Override public void onFirstFrameRendered() { postStatus(""); }
+                @Override public void onFrameResolutionChanged(int w,int h) { main.post(()->listener.onStreamSize(w,h)); }
+            });
+            final VideoDecoder activeVideo=decoder;
+            final AudioDecoder activeAudio=audioDecoder;
+            receiver=new RtpReceiver(activeVideo::feed,activeAudio==null?null:activeAudio::feed);
+            receiver.configure(videoSsrc,videoPt,codec,videoClock,audioSsrc,audioPt,audioClock);
+            receiver.configureSecurity(endpoint.getAddress(),mediaPort,decryptor,encryptor);
+            decoder.setKeyframeRequester(receiver::requestKeyframe);
+            receiver.start(0);
+            sendLine(sigOut,"READY {\"port\":"+receiver.getLocalPort()+"}");
+            if(!"START".equals(sigIn.readLine())) throw new IOException("Expected START");
+            if(!running) return;
+            main.post(()->{ listener.onInputCapability(canInput); listener.onConnected(); });
+            receiver.requestKeyframe();
+            final Object writeLock=new Object();
+            synchronized(inputQueue) { inputQueue.clear(); inputOpen=canInput; }
+            inputSender=new Thread(()->{
                 try {
-                    socket.receive(packet);
-                } catch (SocketTimeoutException timeout) {
-                    return null;
-                }
-                if (packet.getLength() < offer.length) continue;
-                if (!startsWith(offer, DISCOVERY_MAGIC)) continue;
-
-                ByteBuffer buf = ByteBuffer.wrap(offer).order(ByteOrder.LITTLE_ENDIAN);
-                buf.position(8);
-                int version = buf.getInt();
-                int port = Short.toUnsignedInt(buf.getShort());
-                int monitorCount = Short.toUnsignedInt(buf.getShort());
-                if (version == PROTOCOL_VERSION && port > 0) {
-                    final int available = Math.max(1, monitorCount);
-                    main.post(() -> listener.onAvailableMonitors(available));
-                    Log.i(TAG, "discovered streamer at "
-                            + packet.getAddress().getHostAddress()
-                            + ":" + port + " signaling ("
-                            + monitorCount + " monitor"
-                            + (monitorCount != 1 ? "s" : "") + ")");
-                    return new InetSocketAddress(packet.getAddress(), port);
-                }
-            }
-            return null;
-        } finally {
-            closeDiscoverySocket();
-        }
-    }
-
-    private static void sendProbe(DatagramSocket socket, byte[] probe,
-                                  InetAddress address) {
-        try {
-            DatagramPacket packet = new DatagramPacket(
-                    probe, probe.length, address, DISCOVERY_PORT);
-            socket.send(packet);
-        } catch (IOException ignored) {
-        }
-    }
-
-    // --------------------------------------------------------- RTP negotiation
-
-    private void negotiateAndRender(InetSocketAddress offer) throws Exception {
-        int targetPort = offer.getPort() + monitorIndex;
-        Log.i(TAG, "monitor " + monitorIndex + " -> signaling port " + targetPort);
-
-        Socket socket = new Socket();
-        signalingSocket = socket;
-        socket.setTcpNoDelay(true);
-        socket.connect(new InetSocketAddress(offer.getAddress(), targetPort), 3000);
-        // Don't hang forever if the server has our connection queued behind a
-        // dead one — a silent handshake is treated as a failure and retried.
-        socket.setSoTimeout(5000);
-
-        BufferedReader sigIn = new BufferedReader(
-                new InputStreamReader(socket.getInputStream(),
-                                      StandardCharsets.US_ASCII));
-        OutputStream sigOut = socket.getOutputStream();
-
-        // 1. Read HELLO with stream params.
-        String helloLine = sigIn.readLine();
-        if (helloLine == null || !helloLine.startsWith("HELLO "))
-            throw new IOException("expected HELLO, got: " + helloLine);
-        JSONObject hello = new JSONObject(helloLine.substring("HELLO ".length()));
-        JSONObject video = hello.getJSONObject("video");
-        final String vCodec = video.getString("codec");
-        final int vWidth = video.getInt("width");
-        final int vHeight = video.getInt("height");
-        final int vSsrc = video.getInt("ssrc");
-        final int vPt = video.getInt("pt");
-        final int vClock = video.optInt("clock", 90000);
-
-        final int aSsrc;
-        final int aPt;
-        final int aClock;
-        final int aRate;
-        final int aChannels;
-        boolean haveAudio = hello.has("audio");
-        if (haveAudio) {
-            JSONObject audio = hello.getJSONObject("audio");
-            aSsrc = audio.getInt("ssrc");
-            aPt = audio.getInt("pt");
-            aClock = audio.optInt("clock", 48000);
-            aRate = audio.optInt("rate", 48000);
-            aChannels = audio.optInt("channels", 2);
-        } else {
-            aSsrc = -1; aPt = -1; aClock = 48000; aRate = 48000; aChannels = 2;
-        }
-
-        // 2. Set up decoders.
-        final SurfaceView sv = surfaceView;
-        final VideoDecoder videoDecoder = new VideoDecoder();
-        this.videoDecoder = videoDecoder;  // publish so setRenderer() can rebind
-        VideoDecoder.Listener vListener = new VideoDecoder.Listener() {
-            @Override public void onFirstFrameRendered() {
-                postStatus("");  // hide the status overlay
-            }
-            @Override public void onFrameResolutionChanged(int w, int h) {
-                postSize(w, h);
-            }
-        };
-        Surface surface = (sv != null) ? sv.getHolder().getSurface() : null;
-        if (surface != null && surface.isValid()) {
-            try {
-                videoDecoder.init(surface, vCodec, vWidth, vHeight, vListener);
-            } catch (Exception e) {
-                Log.e(TAG, "video decoder init failed: " + e.getMessage());
-                throw e;
-            }
-        } else {
-            Log.w(TAG, "surface not ready — video disabled for this session");
-        }
-
-        final AudioDecoder audioDecoder;
-        if (haveAudio) {
-            AudioDecoder ad = new AudioDecoder();
-            boolean audioOk = false;
-            try {
-                ad.init(aRate, aChannels);
-                audioOk = true;
-            } catch (Exception e) {
-                Log.w(TAG, "audio decoder init failed (audio disabled): "
-                        + e.getMessage());
-                ad = null;
-            }
-            audioDecoder = audioOk ? ad : null;
-        } else {
-            audioDecoder = null;
-        }
-
-        // 3. Bring up the RTP receiver on an ephemeral port.
-        final RtpReceiver rtp = new RtpReceiver(
-                (annexB, ptsUsec, keyframe) ->
-                        videoDecoder.feed(annexB, ptsUsec, keyframe),
-                (haveAudio && audioDecoder != null)
-                        ? (data, off, len, ptsUsec) -> audioDecoder.feed(data, off, len, ptsUsec)
-                        : null);
-        rtp.configure(vSsrc, vPt, vCodec, vClock, aSsrc, aPt, aClock);
-        // Let the decoder ask for a fresh IDR (throttled) if it is ever forced
-        // to drop one under input-buffer starvation.
-        videoDecoder.setKeyframeRequester(rtp::requestKeyframe);
-        rtp.start(0);
-        int udpPort = rtp.getLocalPort();
-        Log.i(TAG, "RTP receiver on udp/" + udpPort);
-
-        // 4. Tell the streamer where to send media, then wait for START.
-        sendLine(sigOut, "READY {\"port\":" + udpPort + "}");
-        String startLine = sigIn.readLine();
-        if (startLine == null || !startLine.equals("START"))
-            throw new IOException("expected START, got: " + startLine);
-
-        postStatus("Streaming");
-
-        // Ask for an immediate keyframe so decode starts without waiting up to
-        // the encoder's full keyframe interval for the first IDR.
-        rtp.requestKeyframe();
-
-        // Input sender: drains pointer/keyboard lines onto the signaling
-        // socket from its own thread. Shares the socket with the keepalive
-        // PING below, so both writers go through writeLock.
-        final Object writeLock = new Object();
-        synchronized (inputQueue) { inputQueue.clear(); }
-        inputOpen = true;
-        Thread inputSender = new Thread(() -> {
-            try {
-                while (inputOpen) {
-                    String line;
-                    synchronized (inputQueue) {
-                        while (inputQueue.isEmpty() && inputOpen) inputQueue.wait();
-                        if (!inputOpen) return;
-                        line = inputQueue.pollFirst();
+                    while(sessionActive.get() && running) {
+                        String line;
+                        synchronized(inputQueue) {
+                            while(inputQueue.isEmpty() && sessionActive.get() && running) inputQueue.wait();
+                            if(!sessionActive.get() || !running) return;
+                            line=inputQueue.pollFirst();
+                        }
+                        synchronized(writeLock) { sendLine(sigOut,line); }
                     }
-                    synchronized (writeLock) { sendLine(sigOut, line); }
-                }
-            } catch (InterruptedException | IOException ignored) {
-                // A dead socket surfaces in the read loop below; just exit.
-            }
-        }, "MetaShareInput");
-        inputSender.start();
-
-        // 5. Block until BYE / disconnect. Media flows on the RTP thread.
-        // Keepalive: ping the streamer every read-timeout so it can tell a
-        // live-but-idle client from a vanished one (its recv times out at 10s).
-        socket.setSoTimeout(3000);
-        try {
-            while (running) {
-                String line;
+                } catch(InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                catch(IOException disconnected) { try { socket.close(); } catch(IOException ignored) {} }
+            },"MetuxaInput-"+monitorIndex);
+            inputSender.start();
+            socket.setSoTimeout(3000);
+            long lastHeartbeat=System.nanoTime();
+            while(running) {
                 try {
-                    line = sigIn.readLine();
-                } catch (SocketTimeoutException idle) {
-                    synchronized (writeLock) {
-                        sendLine(sigOut, "PING");  // throws when the link is dead
-                    }
-                    continue;
+                    String line=sigIn.readLine();
+                    if(line==null || "BYE".equals(line)) break;
+                    if("INPUT_STATE true".equals(line) || "INPUT_STATE false".equals(line)) {
+                        final boolean available=line.endsWith("true");
+                        boolean changed;
+                        synchronized(inputQueue) {
+                            changed=inputOpen!=available;
+                            inputOpen=available;
+                            if(!available) inputQueue.clear();
+                            inputQueue.notifyAll();
+                        }
+                        if(changed) main.post(()->listener.onInputCapability(available));
+                    } else if(!"PING".equals(line)) throw new IOException("Unexpected control message");
+                    lastHeartbeat=System.nanoTime();
+                } catch(SocketTimeoutException idle) {
+                    if(System.nanoTime()-lastHeartbeat>10_000_000_000L) throw new IOException("Server heartbeat timed out");
+                    synchronized(writeLock) { sendLine(sigOut,"PING"); }
                 }
-                if (line == null) break;
-                if (line.equals("BYE")) break;
             }
         } finally {
-            inputOpen = false;
-            synchronized (inputQueue) {
-                inputQueue.clear();
-                inputQueue.notifyAll();
+            sessionActive.set(false);
+            inputOpen=false;
+            synchronized(inputQueue) { inputQueue.clear(); inputQueue.notifyAll(); }
+            closeSignalingSocket(); // unblocks writes before joining the sender
+            if(inputSender!=null) {
+                inputSender.interrupt();
+                RtpReceiver.joinForCleanup(inputSender,1000);
             }
-            inputSender.interrupt();
-            try { rtp.stop(); } catch (Exception ignored) {}
-            this.videoDecoder = null;  // stop setRenderer() touching a dead decoder
-            try { videoDecoder.release(); } catch (Exception ignored) {}
-            if (audioDecoder != null) {
-                try { audioDecoder.release(); } catch (Exception ignored) {}
-            }
+            if(receiver!=null) receiver.stop();
+            if(decryptor!=null) decryptor.close();
+            if(encryptor!=null) encryptor.close();
+            videoDecoder=null;
+            if(decoder!=null) try { decoder.release(); } catch(Exception ignored) {}
+            if(audioDecoder!=null) try { audioDecoder.release(); } catch(Exception ignored) {}
+            main.post(()->{ listener.onInputCapability(false); listener.onDisconnected(); });
         }
     }
-
-    // --------------------------------------------------------------- helpers
-
-    private static void sendLine(OutputStream os, String line) throws IOException {
-        os.write((line + "\n").getBytes(StandardCharsets.US_ASCII));
-        os.flush();
+    private static void sendLine(OutputStream output,String line) throws IOException {
+        if(line.length()>4096 || line.indexOf('\n')>=0 || line.indexOf('\r')>=0) throw new IOException("Invalid outgoing control message");
+        output.write((line+"\n").getBytes(StandardCharsets.US_ASCII)); output.flush();
     }
-
-    private void postStatus(String text) {
-        main.post(() -> listener.onStatus(text));
-    }
-
-    private void postSize(int w, int h) {
-        main.post(() -> listener.onStreamSize(w, h));
-    }
-
-    private static boolean startsWith(byte[] data, byte[] magic) {
-        if (data.length < magic.length) return false;
-        for (int i = 0; i < magic.length; i++) {
-            if (data[i] != magic[i]) return false;
-        }
-        return true;
-    }
-
-    private static void sleepQuietly(long millis) {
-        try { Thread.sleep(millis); } catch (InterruptedException ignored) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    private void closeDiscoverySocket() {
-        DatagramSocket s = discoverySocket;
-        discoverySocket = null;
-        if (s != null) try { s.close(); } catch (Exception ignored) {}
-    }
-
+    private void postStatus(String text) { main.post(()->listener.onStatus(text)); }
     private void closeSignalingSocket() {
-        Socket s = signalingSocket;
-        signalingSocket = null;
-        if (s != null) try { s.close(); } catch (IOException ignored) {}
+        Socket socket=signalingSocket; signalingSocket=null;
+        if(socket!=null) try { socket.close(); } catch(IOException ignored) {}
     }
 }

@@ -1,5 +1,5 @@
 {
-  description = "MetaShare — stream a Wayland session to a Meta Quest 3 floating window";
+  description = "metuxa — stream a Wayland session to a Meta Quest 3 floating window";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -11,10 +11,10 @@
     # per-system packages/apps/devShells.
     {
       # Usage in a flake-based Home Manager config:
-      #   imports = [ inputs.metashare.homeManagerModules.default ];
-      #   programs.metashare.enable = true;
+      #   imports = [ inputs.metuxa.homeManagerModules.default ];
+      #   programs.metuxa.enable = true;
       homeManagerModules.default = import ./nix/hm-module.nix;
-      homeManagerModules.metashare = self.homeManagerModules.default;
+      homeManagerModules.metuxa = self.homeManagerModules.default;
     }
     // flake-utils.lib.eachDefaultSystem (system:
       let
@@ -28,6 +28,8 @@
           systemd            # provides libsystemd.pc that sdbus-c++ requires
           libdrm             # DMA-BUF frame import
           SDL2               # desktop test client window/render
+          openssl
+          json-glib
           gtkmm4             # GTK4 control panel (client/gtk)
           # Schemas/icon theme the wrapped GTK4 frontend expects at runtime.
           gsettings-desktop-schemas
@@ -49,14 +51,14 @@
         # The package definition lives in ./nix/package.nix so it can also be
         # consumed from a channel-based (non-flake) config via callPackage and
         # from the Home Manager module (./nix/hm-module.nix).
-        metashare = pkgs.callPackage ./nix/package.nix { };
+        metuxa = pkgs.callPackage ./nix/package.nix { };
 
         # Flake-driven Flatpak build. The flatpak-builder manifests under
-        # ./flatpak are the source of truth (portable: they build metashare from
+        # ./flatpak are the source of truth (portable: they build metuxa from
         # source against a flatpak runtime). This wrapper just gives them a
         # `nix run` entrypoint so the flake "drives" the flatpak output:
-        #   nix run .#flatpak-cli   -> dev.metashare.Streamer.flatpak
-        #   nix run .#flatpak-ui    -> dev.metashare.StreamerUI.flatpak
+        #   nix run .#flatpak-cli   -> dev.metuxa.Server.flatpak
+        #   nix run .#flatpak-ui    -> dev.metuxa.Control.flatpak
         mkFlatpakApp = { name, appId, manifest }:
           pkgs.writeShellApplication {
             inherit name;
@@ -92,41 +94,41 @@
           };
 
         flatpakCli = mkFlatpakApp {
-          name = "metashare-flatpak-cli";
-          appId = "dev.metashare.Streamer";
-          manifest = "dev.metashare.Streamer.yml";
+          name = "metuxa-flatpak-cli";
+          appId = "dev.metuxa.Server";
+          manifest = "dev.metuxa.Server.yml";
         };
         flatpakUi = mkFlatpakApp {
-          name = "metashare-flatpak-ui";
-          appId = "dev.metashare.StreamerUI";
-          manifest = "dev.metashare.StreamerUI.yml";
+          name = "metuxa-flatpak-ui";
+          appId = "dev.metuxa.Control";
+          manifest = "dev.metuxa.Control.yml";
         };
 
       in
       {
-        packages.default = metashare;
-        packages.metashare = metashare;
+        packages.default = metuxa;
+        packages.metuxa = metuxa;
 
         # `nix run .#ui`     — launch the GNOME control panel
         # `nix run .#stream` — launch the CLI streamer
         apps.ui = {
           type = "app";
-          program = "${metashare}/bin/metashare-streamer-ui";
+          program = "${metuxa}/bin/metuxa-control";
         };
         apps.streamer = {
           type = "app";
-          program = "${metashare}/bin/metashare-streamer";
+          program = "${metuxa}/bin/metuxa-server";
         };
         apps.default = self.apps.${system}.ui;
 
         # `nix run .#flatpak-cli` / `.#flatpak-ui` — build distributable Flatpaks
         apps.flatpak-cli = {
           type = "app";
-          program = "${flatpakCli}/bin/metashare-flatpak-cli";
+          program = "${flatpakCli}/bin/metuxa-flatpak-cli";
         };
         apps.flatpak-ui = {
           type = "app";
-          program = "${flatpakUi}/bin/metashare-flatpak-ui";
+          program = "${flatpakUi}/bin/metuxa-flatpak-ui";
         };
 
         devShells.default = pkgs.mkShell {
@@ -139,9 +141,9 @@
           ]);
 
           shellHook = ''
-            echo "MetaShare dev shell — run: meson setup build && ninja -C build"
-            echo "Streamer: ./build/src/streamer/metashare-streamer"
-            echo "GTK4 control panel: ./build/client/gtk/metashare-streamer-ui"
+            echo "metuxa dev shell — run: meson setup build && ninja -C build"
+            echo "Streamer: ./build/src/streamer/metuxa-server"
+            echo "GTK4 control panel: ./build/client/gtk/metuxa-control"
             echo "Lint: scripts/lint.sh  (--fix to reformat)"
           '';
         };
@@ -165,7 +167,7 @@
           SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
           shellHook = ''
-            echo "MetaShare Android shell — SDK at client/quest/.android-sdk"
+            echo "metuxa Android shell — SDK at client/quest/.android-sdk"
             echo "  cd client/quest && gradle assembleDebug"
             echo "  (first run: ./setup-android-sdk.sh to install the SDK)"
           '';

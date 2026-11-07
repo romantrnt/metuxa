@@ -2,170 +2,173 @@ package com.metashare.client;
 
 import android.app.Activity;
 import android.graphics.Color;
-import android.text.Editable;
+import android.os.SystemClock;
 import android.text.InputType;
-import android.text.TextWatcher;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.view.SurfaceView;
 import android.view.View;
+import android.view.inputmethod.BaseInputConnection;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.ExtractedText;
+import android.view.inputmethod.ExtractedTextRequest;
+import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
-import android.widget.EditText;
 import android.widget.FrameLayout;
+import java.util.HashMap;
+import java.util.Map;
 
-/**
- * Captures Android/Quest input in a transport-neutral form. Networking is
- * intentionally left to a future input channel; activities can forward these
- * callbacks without having to revisit view or IME handling.
- */
+/** Remote content alone forwards pointer events. Native controls always remain usable. */
 final class RemoteInputController {
-
     static final class PointerEvent {
-        final int action;
-        final float x;
-        final float y;
-        final float verticalScroll;
-        final int buttons;
-        final int source;
-        final int toolType;
-
-        PointerEvent(int action, float x, float y, float verticalScroll,
-                     int buttons, int source, int toolType) {
-            this.action = action;
-            this.x = x;
-            this.y = y;
-            this.verticalScroll = verticalScroll;
-            this.buttons = buttons;
-            this.source = source;
-            this.toolType = toolType;
+        final int action, buttons;
+        final float x, y, verticalScroll, horizontalScroll;
+        PointerEvent(int action, float x, float y, float v, float h, int buttons) {
+            this.action = action; this.x = x; this.y = y; verticalScroll = v; horizontalScroll = h; this.buttons = buttons;
         }
     }
-
     interface Listener {
         void onPointerInput(PointerEvent event);
-        /** Committed IME text (never sees Ctrl/Alt chords or navigation keys). */
         void onTextInput(String text);
-        /** A discrete key as an X11 keysym (see {@link Keysyms}). */
         void onKeyInput(int keysym, boolean pressed);
+        void releasePointer();
+        void releaseAll();
     }
-
     private final Activity activity;
-    private final SurfaceView surface;
-    private final EditText keyboardTarget;
+    private final RemoteSurfaceView surface;
+    private final View keyboard;
     private final Listener listener;
-    private boolean pointerEnabled = true;
-
-    RemoteInputController(Activity activity, FrameLayout root,
-                          SurfaceView surface, Listener listener) {
-        this.activity = activity;
-        this.surface = surface;
-        this.listener = listener;
-
-        surface.setOnTouchListener((view, event) -> capturePointer(event));
-        surface.setOnGenericMotionListener((view, event) -> capturePointer(event));
-
-        // A tiny, nearly transparent editor gives the Android IME a legitimate
-        // input target while the decoded Surface remains visually dominant.
-        keyboardTarget = new EditText(activity);
-        keyboardTarget.setSingleLine(false);
-        keyboardTarget.setTextColor(Color.TRANSPARENT);
-        keyboardTarget.setBackgroundColor(Color.TRANSPARENT);
-        keyboardTarget.setCursorVisible(false);
-        keyboardTarget.setAlpha(0.02f);
-        keyboardTarget.setInputType(InputType.TYPE_CLASS_TEXT
-                | InputType.TYPE_TEXT_FLAG_MULTI_LINE
-                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        keyboardTarget.setContentDescription("Remote keyboard input");
-        keyboardTarget.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-                if (count > 0) {
-                    listener.onTextInput(s.subSequence(start, start + count).toString());
-                }
-                for (int i = count; i < before; i++) {
-                    // Deletions in the shadow buffer become remote backspaces.
-                    listener.onKeyInput(0xff08 /* XK_BackSpace */, true);
-                    listener.onKeyInput(0xff08, false);
-                }
-            }
-
-            @Override public void afterTextChanged(Editable editable) {}
+    private final AppSettings settings;
+    private final Map<Integer, Integer> heldHardware = new HashMap<>();
+    private int pointerId = -1;
+    private String composition = "";
+    private boolean released, needsNeutral;
+    private final InputLifecycle lifecycle = new InputLifecycle();
+    private int pointerMode;
+    private java.util.Set<String> allowedDevices;
+    RemoteInputController(Activity activity, FrameLayout root, RemoteSurfaceView surface, Listener listener) {
+        this.activity = activity; this.surface = surface; this.listener = listener; settings = new AppSettings(activity);
+        pointerMode = settings.pointerMode(); allowedDevices = settings.devices();
+        surface.setOnTouchListener((v, e) -> {
+            boolean consumed = capturePointer(e);
+            if (consumed && e.getActionMasked() == MotionEvent.ACTION_UP) v.performClick();
+            return consumed;
         });
-        keyboardTarget.setOnKeyListener((view, keyCode, event) -> {
-            // Two disjoint paths: printable hardware keys fall through so the
-            // editor commits them and the text watcher forwards the text;
-            // navigation/editing/modifier keys and Ctrl/Alt/Meta chords are
-            // forwarded here as discrete keysyms and consumed, so the editor
-            // never also edits the buffer (which would double-send them via
-            // the watcher). Soft-IME input never reaches this listener.
-            int action = event.getAction();
-            if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) {
-                return false;
+        surface.setOnGenericMotionListener((v, e) -> capturePointer(e));
+        keyboard = new View(activity) {
+            @Override public boolean onCheckIsTextEditor() { return true; }
+            @Override public InputConnection onCreateInputConnection(EditorInfo info) {
+                info.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+                info.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING | EditorInfo.IME_ACTION_NONE;
+                info.initialSelStart = info.initialSelEnd = 0;
+                return new BaseInputConnection(this, false) {
+                    @Override public boolean commitText(CharSequence text, int newCursorPosition) {
+                        composition = ""; if (acceptsInput() && text != null) listener.onTextInput(text.toString()); return true;
+                    }
+                    @Override public boolean setComposingText(CharSequence text, int position) {
+                        if (!acceptsInput()) { composition = ""; return true; }
+                        if (text != null && text.length() > 8192) { composition = ""; listener.onTextInput(text.toString()); return true; }
+                        composition = text == null ? "" : text.toString(); return true;
+                    }
+                    @Override public boolean finishComposingText() {
+                        if (acceptsInput() && !composition.isEmpty()) { String c = composition; composition = ""; listener.onTextInput(c); } return true;
+                    }
+                    @Override public boolean deleteSurroundingText(int before, int after) {
+                        if (!acceptsInput()) return true;
+                        if (!composition.isEmpty()) { composition = ""; return true; }
+                        for (int i = 0; i < Math.min(128, Math.max(0, before)); i++) tap(0xff08);
+                        for (int i = 0; i < Math.min(128, Math.max(0, after)); i++) tap(0xffff);
+                        return true;
+                    }
+                    @Override public boolean deleteSurroundingTextInCodePoints(int before, int after) { return deleteSurroundingText(before, after); }
+                    @Override public CharSequence getTextBeforeCursor(int n, int flags) { return ""; }
+                    @Override public CharSequence getTextAfterCursor(int n, int flags) { return ""; }
+                    @Override public CharSequence getSelectedText(int flags) { return ""; }
+                    @Override public ExtractedText getExtractedText(ExtractedTextRequest request, int flags) {
+                        ExtractedText t = new ExtractedText(); t.text = ""; return t;
+                    }
+                    @Override public boolean sendKeyEvent(KeyEvent event) { return handleKey(event); }
+                    @Override public boolean performEditorAction(int actionCode) { tap(0xff0d); return true; }
+                    @Override public void closeConnection() { composition = ""; super.closeConnection(); }
+                };
             }
-            boolean pressed = action == KeyEvent.ACTION_DOWN;
-            int keysym = Keysyms.special(keyCode);
-            if (keysym == 0 && (event.getMetaState()
-                    & (KeyEvent.META_CTRL_ON | KeyEvent.META_ALT_ON
-                       | KeyEvent.META_META_ON)) != 0) {
-                keysym = Keysyms.chorded(event);
-            }
-            if (keysym == 0) return false;
-            listener.onKeyInput(keysym, pressed);
-            return true;
-        });
-        FrameLayout.LayoutParams keyboardParams = new FrameLayout.LayoutParams(2, 2);
-        keyboardParams.leftMargin = 1;
-        keyboardParams.topMargin = 1;
-        root.addView(keyboardTarget, keyboardParams);
-
-        // Keep the IME closed on launch. Only the primary toolbar's explicit
-        // keyboard action transfers focus to the editor.
-        root.setFocusableInTouchMode(true);
-        root.requestFocus();
+        };
+        keyboard.setBackgroundColor(Color.TRANSPARENT);
+        keyboard.setFocusable(true); keyboard.setFocusableInTouchMode(true);
+        keyboard.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
+        keyboard.setContentDescription("Remote keyboard. Text is sent to the selected PC.");
+        root.addView(keyboard, new FrameLayout.LayoutParams(1, 1));
     }
-
-    void setPointerEnabled(boolean enabled) {
-        pointerEnabled = enabled;
-    }
-
-    void showKeyboard() {
-        keyboardTarget.requestFocus();
-        keyboardTarget.post(() -> {
-            InputMethodManager ime = (InputMethodManager)
-                    activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
-            if (ime != null) ime.showSoftInput(keyboardTarget, InputMethodManager.SHOW_IMPLICIT);
-        });
-    }
-
-    void release() {
-        surface.setOnTouchListener(null);
-        surface.setOnGenericMotionListener(null);
-        InputMethodManager ime = (InputMethodManager)
-                activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
-        if (ime != null) ime.hideSoftInputFromWindow(keyboardTarget.getWindowToken(), 0);
-    }
-
-    private boolean capturePointer(MotionEvent event) {
-        if (!pointerEnabled || surface.getWidth() <= 0 || surface.getHeight() <= 0) {
+    boolean handleKey(KeyEvent event) {
+        if (!acceptsInput() || event.getKeyCode() == KeyEvent.KEYCODE_BACK || event.getKeyCode() == KeyEvent.KEYCODE_HOME
+                || event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP || event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_DOWN
+                || event.getKeyCode() == KeyEvent.KEYCODE_POWER) return false;
+        int code = event.getKeyCode();
+        if (event.getAction() == KeyEvent.ACTION_UP) {
+            Integer key = heldHardware.remove(code);
+            if (key != null) { listener.onKeyInput(key, false); return true; }
             return false;
         }
-        if ((event.getSource() & InputDevice.SOURCE_CLASS_POINTER) == 0
-                && event.getToolType(0) == MotionEvent.TOOL_TYPE_UNKNOWN) {
-            return false;
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+        int keysym = Keysyms.special(code);
+        if (keysym == 0) {
+            int cp = event.getUnicodeChar((event.getMetaState() & (KeyEvent.META_CTRL_ON | KeyEvent.META_ALT_ON | KeyEvent.META_META_ON)) != 0 ? 0 : event.getMetaState());
+            if (cp <= 0 || (cp & android.view.KeyCharacterMap.COMBINING_ACCENT) != 0) return false;
+            keysym = Keysyms.fromCodePoint(cp);
         }
-        float normalizedX = clamp(event.getX() / surface.getWidth());
-        float normalizedY = clamp(event.getY() / surface.getHeight());
-        listener.onPointerInput(new PointerEvent(
-                event.getActionMasked(), normalizedX, normalizedY,
-                event.getAxisValue(MotionEvent.AXIS_VSCROLL),
-                event.getButtonState(), event.getSource(), event.getToolType(0)));
+        if (!heldHardware.containsKey(code)) { heldHardware.put(code, keysym); listener.onKeyInput(keysym, true); }
         return true;
     }
-
-    private static float clamp(float value) {
-        return Math.max(0f, Math.min(1f, value));
+    private boolean acceptsInput() { return !released && lifecycle.allowsInput() && activity.hasWindowFocus(); }
+    void setResumed(boolean resumed) { lifecycle.resumed(resumed); if (!resumed) lostFocus(); }
+    void setWindowFocused(boolean focused) { lifecycle.focused(focused); if (!focused) lostFocus(); }
+    void policyChanged() { listener.releasePointer(); pointerId = -1; needsNeutral = true; pointerMode = settings.pointerMode(); allowedDevices = settings.devices(); }
+    void lostFocus() { composition = ""; heldHardware.clear(); pointerId = -1; needsNeutral = true; listener.releaseAll(); }
+    void showKeyboard() {
+        keyboard.requestFocus();
+        keyboard.post(() -> { InputMethodManager ime = (InputMethodManager) activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
+            if (!released && ime != null) ime.showSoftInput(keyboard, InputMethodManager.SHOW_IMPLICIT); });
+    }
+    void release() {
+        lostFocus(); released = true;
+        surface.setOnTouchListener(null); surface.setOnGenericMotionListener(null);
+        InputMethodManager ime = (InputMethodManager) activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
+        if (ime != null) ime.hideSoftInputFromWindow(keyboard.getWindowToken(), 0);
+    }
+    private void tap(int keysym) { if (acceptsInput()) { listener.onKeyInput(keysym, true); listener.onKeyInput(keysym, false); } }
+    private boolean capturePointer(MotionEvent event) {
+        if (!acceptsInput()) return true;
+        int count = event.getPointerCount();
+        ConnectionCoordinator.INSTANCE.diagnostics.record(SystemClock.elapsedRealtime(), event.getSource(), count > 0 ? event.getToolType(0) : 0,
+                event.getDeviceId(), event.getActionMasked(), event.getButtonState());
+        InputDevice device = event.getDevice();
+        boolean allowed = PointerPolicy.permits(pointerMode, device != null && !device.isVirtual(),
+                device == null ? null : device.getDescriptor(), allowedDevices);
+        if (!allowed) { listener.releasePointer(); pointerId = -1; return true; }
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_HOVER_EXIT) {
+            listener.releasePointer(); pointerId = -1; return true;
+        }
+        if (needsNeutral) {
+            if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_BUTTON_PRESS) needsNeutral = false;
+            else if (action == MotionEvent.ACTION_UP || event.getButtonState() == 0 && action != MotionEvent.ACTION_MOVE) {
+                needsNeutral = false;
+                if (action == MotionEvent.ACTION_UP) return true;
+            } else return true;
+        }
+        if (count == 0 || surface.getWidth() <= 0 || surface.getHeight() <= 0) return true;
+        if ((event.getSource() & InputDevice.SOURCE_CLASS_POINTER) == 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_UNKNOWN) return false;
+        if (action == MotionEvent.ACTION_DOWN) pointerId = event.getPointerId(0);
+        if (action == MotionEvent.ACTION_POINTER_DOWN) return true;
+        if (action == MotionEvent.ACTION_POINTER_UP) {
+            if (event.getPointerId(event.getActionIndex()) == pointerId) { listener.releasePointer(); pointerId = -1; }
+            return true;
+        }
+        int index = pointerId < 0 ? 0 : event.findPointerIndex(pointerId);
+        if (index < 0) { listener.releasePointer(); pointerId = -1; return true; }
+        listener.onPointerInput(new PointerEvent(action, event.getX(index) / surface.getWidth(), event.getY(index) / surface.getHeight(),
+                event.getAxisValue(MotionEvent.AXIS_VSCROLL), event.getAxisValue(MotionEvent.AXIS_HSCROLL), event.getButtonState()));
+        if (action == MotionEvent.ACTION_UP) pointerId = -1;
+        return true;
     }
 }

@@ -1,186 +1,145 @@
 #include "signaling_server.hpp"
-
 #include <arpa/inet.h>
 #include <cerrno>
-#include <cstdio>
+#include <chrono>
 #include <cstring>
-#include <netinet/in.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <pthread.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <algorithm>
-#include <array>
-#include <string>
-
 namespace metashare::signal {
-
 namespace {
-
-// Preserve bytes after a newline so one recv can serve several input events.
-class LineReader {
-  public:
-    bool read_line(int fd, std::string& line) {
-        line.clear();
-        for (;;) {
-            if (pos_ == size_) {
-                const ssize_t n = ::recv(fd, buffer_.data(), buffer_.size(), 0);
-                if (n < 0 && errno == EINTR) continue;
-                if (n <= 0) return false;
-                pos_ = 0;
-                size_ = static_cast<std::size_t>(n);
-            }
-            const char* begin = buffer_.data() + pos_;
-            const auto* newline = static_cast<const char*>(
-                std::memchr(begin, '\n', size_ - pos_));
-            const auto count = newline
-                                   ? static_cast<std::size_t>(newline - begin)
-                                   : size_ - pos_;
-            if (line.size() + count > 65536) return false;
-            line.append(begin, count);
-            pos_ += count;
-            if (newline) {
-                ++pos_;
-                return true;
-            }
-        }
+using Clock = std::chrono::steady_clock;
+bool wait_socket(int fd, short events, Clock::time_point deadline) {
+    for (;;) {
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline-Clock::now()).count();
+        if (left <= 0) return false;
+        pollfd p{fd,events,0};
+        const int n = ::poll(&p,1,static_cast<int>(left));
+        if (n < 0 && errno == EINTR) continue;
+        return n > 0 && (p.revents & events);
     }
-
-  private:
-    std::array<char, 4096> buffer_{};
-    std::size_t pos_ = 0;
-    std::size_t size_ = 0;
-};
-
-bool send_all(int fd, const void* data, std::size_t len) {
-    auto* p = static_cast<const char*>(data);
-    std::size_t off = 0;
-    while (off < len) {
-        ssize_t n = ::send(fd, p + off, len - off, MSG_NOSIGNAL);
-        if (n <= 0) {
-            if (n < 0 && errno == EINTR) continue;
-            return false;
-        }
-        off += static_cast<std::size_t>(n);
-    }
-    return true;
 }
-
-}  // namespace
-
+}
 Server::~Server() { stop(); }
-
-bool Server::start(std::uint16_t port, OnConnect on_connect,
-                   OnMessage on_message, std::string& err) {
-    listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_fd_ < 0) {
-        err = std::strerror(errno);
-        return false;
+bool Server::start(std::uint16_t port, OnConnect on_connect, OnMessage on_message, std::string& err) {
+    if (running_ || accept_thread_.joinable()) { err="TLS server already started"; return false; }
+    if (!credentials_) { err="TLS credentials required; plaintext is not supported"; return false; }
+    listen_fd_=::socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);
+    if(listen_fd_<0) { err=std::strerror(errno); return false; }
+    int yes=1; ::setsockopt(listen_fd_,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes));
+    sockaddr_in addr{}; addr.sin_family=AF_INET; addr.sin_addr.s_addr=htonl(INADDR_ANY); addr.sin_port=htons(port);
+    if(::bind(listen_fd_,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))<0 || ::listen(listen_fd_,4)<0) {
+        err=std::strerror(errno); ::close(listen_fd_); listen_fd_=-1; return false;
     }
-
-    int yes = 1;
-    ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(port);
-    if (::bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) <
-        0) {
-        err = "bind: " + std::string(std::strerror(errno));
-        ::close(listen_fd_);
-        listen_fd_ = -1;
-        return false;
-    }
-    if (::listen(listen_fd_, 1) < 0) {
-        err = "listen: " + std::string(std::strerror(errno));
-        ::close(listen_fd_);
-        listen_fd_ = -1;
-        return false;
-    }
-
-    running_ = true;
-    accept_thread_ = std::thread([this, port,
-                                  on_connect = std::move(on_connect),
-                                  on_message = std::move(on_message)] {
-        while (running_) {
-            sockaddr_in peer{};
-            socklen_t plen = sizeof(peer);
-            int fd =
-                ::accept(listen_fd_, reinterpret_cast<sockaddr*>(&peer), &plen);
-            if (fd < 0) {
-                if (!running_) break;
-                continue;
-            }
-            char ip[INET_ADDRSTRLEN] = {0};
-            ::inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
-            std::fprintf(stderr, "[signaling] client connected from %s\n", ip);
-            client_loop(fd, peer, on_connect, on_message);
-            std::fprintf(stderr, "[signaling] client disconnected\n");
+    socklen_t alen=sizeof(addr); ::getsockname(listen_fd_,reinterpret_cast<sockaddr*>(&addr),&alen); bound_port_=ntohs(addr.sin_port);
+    running_=true;
+    accept_thread_=std::thread([this, listener=listen_fd_, on_connect=std::move(on_connect),on_message=std::move(on_message)] {
+        // OpenSSL socket BIO may write(). Block SIGPIPE on this thread only.
+        sigset_t blocked; sigemptyset(&blocked); sigaddset(&blocked,SIGPIPE); pthread_sigmask(SIG_BLOCK,&blocked,nullptr);
+        while(running_) {
+            sockaddr_in peer{}; socklen_t size=sizeof(peer);
+            int fd=::accept4(listener,reinterpret_cast<sockaddr*>(&peer),&size,SOCK_CLOEXEC|SOCK_NONBLOCK);
+            if(fd<0) { if(!running_) break; if(errno==EINTR) continue; break; }
+            client_loop(fd,peer,on_connect,on_message);
+            if(running_) std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     });
     return true;
 }
-
 void Server::stop() {
-    if (!running_.exchange(false)) return;
-    if (listen_fd_ >= 0) {
-        ::shutdown(listen_fd_, SHUT_RDWR);
-        ::close(listen_fd_);
-        listen_fd_ = -1;
+    running_=false;
+    if(listen_fd_>=0) ::shutdown(listen_fd_,SHUT_RDWR);
+    {
+        std::lock_guard lk(send_mu_);
+        int fd=client_fd_.load(); if(fd>=0) ::shutdown(fd,SHUT_RDWR);
     }
-    int fd = client_fd_.exchange(-1);
-    if (fd >= 0) {
-        ::shutdown(fd, SHUT_RDWR);
-        ::close(fd);
-    }
-    if (accept_thread_.joinable()) accept_thread_.join();
+    if(accept_thread_.joinable()) accept_thread_.join();
+    if(listen_fd_>=0) { ::close(listen_fd_); listen_fd_=-1; }
 }
-
-bool Server::has_client() const { return client_fd_.load() >= 0; }
-
+bool Server::has_client() const { return authenticated_; }
+bool Server::write_line_locked(const std::string& line) {
+    if(!tls_ || line.size()>4096) return false;
+    auto deadline=Clock::now()+std::chrono::seconds(3); std::size_t off=0;
+    while(off<line.size() && running_) {
+        int n=SSL_write(tls_,line.data()+off,static_cast<int>(line.size()-off));
+        if(n>0) { off+=n; continue; }
+        int e=SSL_get_error(tls_,n);
+        if(e!=SSL_ERROR_WANT_READ && e!=SSL_ERROR_WANT_WRITE) return false;
+        if(!wait_socket(client_fd_,e==SSL_ERROR_WANT_READ?POLLIN:POLLOUT,deadline)) return false;
+    }
+    return off==line.size();
+}
 bool Server::send(const Message& m) {
-    std::lock_guard<std::mutex> lk(send_mu_);
-    int fd = client_fd_.load();
-    if (fd < 0) return false;
-    std::string line = serialize(m) + '\n';
-    return send_all(fd, line.data(), line.size());
+    std::lock_guard lk(send_mu_);
+    if(!authenticated_) return false;
+    return write_line_locked(serialize(m)+'\n');
 }
-
-void Server::client_loop(int fd, const sockaddr_in& peer,
-                         const OnConnect& on_connect,
-                         const OnMessage& on_message) {
-    client_fd_ = fd;
-
-    // The client keepalives every ~3 s (PING). If nothing arrives for 10 s the
-    // connection is dead; time out so the accept loop can serve a reconnect
-    // instead of blocking on a half-open socket forever.
-    timeval tv{10, 0};
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-    // Notify the owner that a client is connected so it can send the initial
-    // HELLO. The new raw-RTP protocol has no "OK" marker — HELLO is first.
-    if (on_connect) on_connect(peer);
-
-    LineReader reader;
-    std::string line;
-    while (running_) {
-        if (!reader.read_line(fd, line)) break;
-        Message msg;
-        if (!parse(line, msg)) {
-            std::fprintf(stderr, "[signaling] malformed line: %zu bytes\n",
-                         line.size());
-            continue;
+bool Server::read_line(int fd,std::string& line,std::string& pending,int timeout_ms) {
+    auto deadline=Clock::now()+std::chrono::milliseconds(timeout_ms);
+    while(running_) {
+        auto end=pending.find('\n');
+        if(end!=std::string::npos) { line=pending.substr(0,end); pending.erase(0,end+1); return line.size()<=4096 && line.find('\0')==std::string::npos; }
+        if(pending.size()>4096) return false;
+        char buf[1024]; int n,e;
+        {
+            std::lock_guard lk(send_mu_);
+            if(!tls_) return false;
+            n=SSL_read(tls_,buf,sizeof(buf)); e=n>0?SSL_ERROR_NONE:SSL_get_error(tls_,n);
         }
-        if (on_message) on_message(msg);
-        if (msg.type == Type::kBye) break;
+        if(n>0) { pending.append(buf,n); continue; }
+        if(e!=SSL_ERROR_WANT_READ && e!=SSL_ERROR_WANT_WRITE) return false;
+        if(!wait_socket(fd,e==SSL_ERROR_WANT_READ?POLLIN:POLLOUT,deadline)) return false;
     }
-
-    int prev = client_fd_.exchange(-1);
-    if (prev == fd) {
-        ::shutdown(fd, SHUT_RDWR);
-        ::close(fd);
-    }
-    if (on_disconnect) on_disconnect();
+    return false;
 }
-
-}  // namespace metashare::signal
+void Server::client_loop(int fd,const sockaddr_in& peer,const OnConnect& on_connect,const OnMessage& on_message) {
+    {
+        std::lock_guard lk(send_mu_); client_fd_=fd;
+        tls_=SSL_new(credentials_->context());
+        if(tls_) SSL_set_fd(tls_,fd);
+    }
+    bool connected=false;
+    auto cleanup=[&] {
+        {
+            std::lock_guard lk(send_mu_); authenticated_=false;
+            SSL_free(tls_); tls_=nullptr; client_fd_=-1; ::shutdown(fd,SHUT_RDWR); ::close(fd);
+        }
+        if(connected && on_disconnect) on_disconnect();
+    };
+    bool handshake=false; auto deadline=Clock::now()+std::chrono::seconds(5);
+    while(running_ && tls_) {
+        int n,e;
+        { std::lock_guard lk(send_mu_); n=SSL_accept(tls_); e=n==1?SSL_ERROR_NONE:SSL_get_error(tls_,n); }
+        if(n==1) { handshake=true; break; }
+        if((e!=SSL_ERROR_WANT_READ && e!=SSL_ERROR_WANT_WRITE) || !wait_socket(fd,e==SSL_ERROR_WANT_READ?POLLIN:POLLOUT,deadline)) break;
+    }
+    std::string line,pending;
+    if (!handshake) { cleanup(); return; }
+    const bool auth_line = read_line(fd,line,pending,5000);
+    const bool accepted = auth_line && line.size()==37 && line.compare(0,5,"AUTH ")==0 && credentials_->authenticate(std::string_view(line).substr(5));
+    OPENSSL_cleanse(line.data(),line.size()); line.clear();
+    if (!accepted) {
+        if (auth_line) { std::lock_guard lk(send_mu_); write_line_locked("ERROR AUTH\n"); }
+        cleanup(); return;
+    }
+    authenticated_=true; connected=true;
+    try {
+        if(on_connect) on_connect(peer);
+        auto window=Clock::now(); unsigned messages=0;
+        while(running_ && read_line(fd,line,pending,10000)) {
+            const auto now=Clock::now();
+            if(now-window>=std::chrono::seconds(1)) { window=now; messages=0; }
+            if(++messages>1000) break;
+            Message msg{};
+            if(!parse(line,msg) || (msg.type!=Type::kReady && msg.type!=Type::kInput && msg.type!=Type::kPing && msg.type!=Type::kBye)) break;
+            if(on_message) on_message(msg);
+            if(msg.type==Type::kBye) break;
+        }
+    } catch (...) { /* All callback failures must still release the session. */ }
+    cleanup();
+}
+} // namespace metashare::signal

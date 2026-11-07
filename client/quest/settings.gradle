@@ -11,5 +11,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = 'MetaShareQuest'
+rootProject.name = 'metuxaQuest'
 include ':app'

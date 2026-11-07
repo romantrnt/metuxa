@@ -18,7 +18,9 @@
 #pragma once
 
 #include <cstdint>
-#include <cstdio>
+#include <cmath>
+#include <locale>
+#include <sstream>
 #include <string>
 
 namespace metashare::input {
@@ -37,45 +39,41 @@ struct Event {
 // Parse one INPUT body. Returns false on malformed input; out is left in an
 // unspecified state on failure.
 inline bool parse(const std::string& body, Event& out) {
-    if (body.size() < 3 || body[1] != ' ') return false;
-    const char* rest = body.c_str() + 2;
+    if (body.size() < 3 || body.size() > 128 || body[1] != ' ') return false;
+    // Classic locale, exact token count, bounded integer conversion. Reject
+    // trailing garbage, NaN/Inf, signed/overflowed keysyms and invalid states.
+    std::istringstream in(body.substr(2));
+    in.imbue(std::locale::classic());
+    Event parsed{};
     switch (body[0]) {
     case 'm': {
-        double x = 0, y = 0;
-        if (std::sscanf(rest, "%lf %lf", &x, &y) != 2) return false;
-        if (!(x >= 0.0 && x <= 1.0) || !(y >= 0.0 && y <= 1.0)) return false;
-        out.kind = Event::Kind::kMove;
-        out.x = x;
-        out.y = y;
-        return true;
+        double x, y;
+        if (!(in >> x >> y) || !std::isfinite(x) || !std::isfinite(y) ||
+            x < 0 || x > 1 || y < 0 || y > 1) return false;
+        parsed.kind=Event::Kind::kMove; parsed.x=x; parsed.y=y; break;
     }
     case 'b': {
-        int b = 0, s = 0;
-        if (std::sscanf(rest, "%d %d", &b, &s) != 2) return false;
-        out.kind = Event::Kind::kButton;
-        out.button = b;
-        out.pressed = (s != 0);
-        return true;
+        int b, state;
+        if (!(in >> b >> state) || b < 272 || b > 279 || (state!=0 && state!=1)) return false;
+        parsed.kind=Event::Kind::kButton; parsed.button=b; parsed.pressed=state==1; break;
     }
     case 's': {
-        int v = 0, h = 0;
-        if (std::sscanf(rest, "%d %d", &v, &h) != 2) return false;
-        out.kind = Event::Kind::kScroll;
-        out.scroll_v = v;
-        out.scroll_h = h;
-        return true;
+        int v,h;
+        if (!(in >> v >> h) || v < -120 || v > 120 || h < -120 || h > 120) return false;
+        parsed.kind=Event::Kind::kScroll; parsed.scroll_v=v; parsed.scroll_h=h; break;
     }
     case 'k': {
-        unsigned sym = 0;
-        int s = 0;
-        if (std::sscanf(rest, "%u %d", &sym, &s) != 2) return false;
-        out.kind = Event::Kind::kKey;
-        out.keysym = sym;
-        out.pressed = (s != 0);
-        return true;
+        long long k; int state;
+        if (!(in >> k >> state) || k<=0 || k>0x0110ffff || (state!=0 && state!=1)) return false;
+        // X11 legacy keysyms, or valid Unicode codepoints in X11's encoding.
+        if(k>0xffff && (k<0x01000000 || (k>=0x0100d800 && k<=0x0100dfff))) return false;
+        parsed.kind=Event::Kind::kKey; parsed.keysym=static_cast<std::uint32_t>(k); parsed.pressed=state==1; break;
     }
     default: return false;
     }
+    in >> std::ws;
+    if (!in.eof()) return false;
+    out=parsed; return true;
 }
 
 }  // namespace metashare::input
