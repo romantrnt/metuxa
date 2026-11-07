@@ -17,15 +17,16 @@ final class QuestToolbar {
         void onSettingsRequested();
         void onDisconnectRequested();
     }
-    private final Button pointer, minus, plus;
+    private final Button pointer, minus, plus, keyboard;
+    private InputOptions options = InputOptions.full();
     private final TextView count;
     private int screenCount = 1;
     QuestToolbar(Activity activity, FrameLayout root, boolean primary, Callbacks callbacks) {
         HorizontalScrollView scroll = new HorizontalScrollView(activity); scroll.setHorizontalScrollBarEnabled(false); scroll.setFillViewport(true);
         scroll.setBackground(QuestUi.background(activity, QuestUi.PANEL, 0));
         LinearLayout controls = QuestUi.row(activity); controls.setPadding(QuestUi.dp(activity, 10), 0, QuestUi.dp(activity, 10), 0);
-        Button keyboard = QuestUi.button(activity, "Keyboard", false); controls.addView(keyboard); keyboard.setOnClickListener(v -> callbacks.onKeyboardRequested());
-        pointer = QuestUi.button(activity, "Pointer: on", false); controls.addView(pointer); pointer.setOnClickListener(v -> callbacks.onPointerToggle());
+        keyboard = QuestUi.button(activity, "Keyboard", false); controls.addView(keyboard); keyboard.setOnClickListener(v -> callbacks.onKeyboardRequested());
+        pointer = QuestUi.button(activity, "Pointer: on", false); controls.addView(pointer); pointer.setOnClickListener(v -> { if (options.pointerActions()) callbacks.onPointerToggle(); else callbacks.onSettingsRequested(); });
         minus = QuestUi.button(activity, "−", false); minus.setContentDescription("Close the last monitor window"); minus.setOnClickListener(v -> callbacks.onScreenCountRequested(screenCount - 1));
         plus = QuestUi.button(activity, "+", false); plus.setContentDescription("Open another monitor window"); plus.setOnClickListener(v -> callbacks.onScreenCountRequested(screenCount + 1));
         count = QuestUi.text(activity, "1 / 1", 14, QuestUi.MUTED); count.setPadding(12, 0, 12, 0);
@@ -42,16 +43,23 @@ final class QuestToolbar {
         FrameLayout.LayoutParams disconnectParams = new FrameLayout.LayoutParams(QuestUi.dp(activity, 132), QuestUi.dp(activity, 52), Gravity.END | Gravity.CENTER_VERTICAL);
         disconnectParams.rightMargin = QuestUi.dp(activity, 4); footer.addView(disconnect, disconnectParams);
         root.addView(footer, params);
-        setScreenCount(1, 1); setPointerMode(new AppSettings(activity).pointerMode());
+        setScreenCount(1, 1); setInputOptions(new AppSettings(activity).inputOptions());
     }
     void setScreenCount(int current, int maximum) {
         screenCount = Math.max(1, current); count.setText(screenCount + " / " + maximum);
         count.setContentDescription(screenCount + " of " + maximum + " monitor windows");
         minus.setEnabled(screenCount > 1); plus.setEnabled(screenCount < maximum);
     }
-    void setPointerMode(int mode) {
-        pointer.setText(mode == PointerPolicy.BLOCK ? "Pointer: blocked" : mode == PointerPolicy.DEVICES ? "Pointer: devices" : "Pointer: on");
-        pointer.setContentDescription(PointerPolicy.label(mode) + ". Change in all windows.");
+    void setInputOptions(InputOptions next) {
+        options = next;
+        int mode = options.pointerMode;
+        String label = !options.pointerActions() ? "Pointer settings" : mode == PointerPolicy.BLOCK ? "Pointer: blocked"
+            : mode == PointerPolicy.DEVICES ? "Pointer: allowed" : mode == PointerPolicy.EXCEPT_DEVICES ? "Pointer: except"
+            : options.move && options.click && options.scroll ? "Pointer: on" : "Pointer: custom";
+        pointer.setText(label);
+        pointer.setContentDescription(PointerPolicy.label(mode) + ". Move " + options.move + ", click " + options.click + ", scroll " + options.scroll + ". Applies to all windows.");
+        keyboard.setEnabled(options.keyboard); keyboard.setText(options.keyboard ? "Keyboard" : "Keyboard off");
+        keyboard.setContentDescription(options.keyboard ? "Open remote keyboard" : "Remote keyboard disabled in settings");
     }
     static void styleStatus(TextView text) { text.setTextSize(13); text.setTextColor(QuestUi.MUTED); text.setPadding(16, 10, 16, 10); }
 }

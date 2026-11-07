@@ -23,7 +23,14 @@ Run these only when ready to stop the old stream. Keep the original desktop fold
 - Enable control before Start, accept portal permission, test a mouse click/drag/scroll, Ctrl/Alt, Unicode/Russian text, Backspace and Enter.
 - During a drag or held modifier: block pointer, disable remote input on PC, disconnect Wi-Fi, pause Quest, lose window focus, and stop the app. No remote key/button should remain held.
 - Open all panels, set Block pointer once, and confirm hands/controller rays/Quest mouse do not forward pointer actions in any panel. Home hand tracking and a physical laptop mouse remain usable.
-- Keyboard-only behavior is explicit. Text entered using a hand on the Quest virtual keyboard is still text, not a distinguishable hand-pointer event.
+- Test each independent action switch: movement/hover, clicks/drag, scroll, hardware/IME keyboard. With movement off and clicks on, the PC cursor must not move and clicks must target its existing location. With clicks off, moving over a panel must not synthesize a drag.
+- Disable scroll with a partially accumulated wheel step; it must not leak into later input. Disable keyboard during a paste/held modifier; pending text must stop and held keys release.
+- Compare Full remote, Keyboard only, View only and Custom preset labels with the actual switches; reopen the launcher and new panels to verify persistence.
+- In pointer-device filters, allow only selected physical descriptors or all identifiable physical descriptors except selected. Unknown and virtual devices must fail closed. Full unfiltered mode is separate.
+- Drag with an allowed mouse while a blocked hand/controller hovers, clicks or scrolls: the blocked source must not move, release or re-press the mouse drag. Unplug the mouse during a drag and confirm its buttons release.
+- Reset/re-enable input while a mouse button remains held, then press a different button. The old held button must not be resurrected without a release and a fresh press.
+- Press remote Ctrl, focus a native toolbar button, then release Ctrl. The laptop must not retain the modifier, and native controls must still receive their own input.
+- Keyboard-only behavior is explicit. Text entered using a hand on the Quest virtual keyboard is still text, not a distinguishable hand-pointer event; disabling keyboard blocks that channel too.
 
 ## Device diagnostic
 

@@ -30,9 +30,11 @@ public final class MainActivity extends Activity {
     private final ConnectionCoordinator coordinator = ConnectionCoordinator.INSTANCE;
     private AppSettings settings;
     private EditText host, port, fingerprint, token;
-    private CheckBox audio, autoConnect;
+    private CheckBox audio, autoConnect, moveInput, clickInput, scrollInput, keyboardInput;
+    private TextView presetStatus;
     private Spinner monitorCount;
     private RadioGroup pointerModes;
+    private final int[] pointerModeIds = new int[4];
     private TextView status, discoveryStatus, sessionStatus;
     private LinearLayout hosts, columns, connectionCard, controlsCard;
     private Button scanButton, resumeButton, disconnectButton;
@@ -92,18 +94,44 @@ public final class MainActivity extends Activity {
         actions.addView(connect); actions.addView(save); actions.addView(forget); connection.addView(actions);
         connect.setOnClickListener(v -> connect()); save.setOnClickListener(v -> { if (saveSettings()) showStatus("PC and settings saved.", false); }); forget.setOnClickListener(v -> forget());
         status = QuestUi.text(this, "Nothing connects until you choose Connect.", 13, QuestUi.MUTED); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); connection.addView(status);
-        QuestUi.heading(controls, "Pointer control");
-        controls.addView(QuestUi.text(this, "Applies immediately to every metuxa window, including new ones. The keyboard stays available.", 14, QuestUi.MUTED));
-        pointerModes = new RadioGroup(this);
-        for (int i = 0; i < 3; i++) {
-            RadioButton button = new RadioButton(this); button.setId(100 + i); button.setMinHeight(QuestUi.dp(this, 48)); button.setTextColor(QuestUi.TEXT);
-            button.setText(i == 0 ? "Full pointer input" : i == 1 ? "Block all remote pointer input" : "Selected physical devices (experimental)"); pointerModes.addView(button);
+        QuestUi.heading(controls, "Remote input");
+        controls.addView(QuestUi.text(this, "Saved globally and applied immediately to every current and new window. Local launcher and toolbar controls always remain usable.", 14, QuestUi.MUTED));
+        presetStatus = QuestUi.text(this, "", 15, QuestUi.ACCENT); controls.addView(presetStatus);
+        LinearLayout presets = QuestUi.row(this);
+        String[] presetNames = { "Full remote", "Keyboard only", "View only" };
+        for (int i = 0; i < presetNames.length; i++) {
+            final int preset = i; Button b = QuestUi.button(this, presetNames[i], false);
+            presets.addView(b, new LinearLayout.LayoutParams(0, -2, 1));
+            b.setOnClickListener(v -> { coordinator.changeInputOptions(this, InputOptions.preset(preset)); refreshInputControls(); showStatus("Input preset applied to every window.", false); });
         }
-        pointerModes.check(100 + settings.pointerMode()); controls.addView(pointerModes);
-        pointerModes.setOnCheckedChangeListener((g, id) -> { if (!applyingProfile) coordinator.changePointerMode(this, id - 100); });
-        Button devices = QuestUi.button(this, "Choose pointer devices", false); controls.addView(devices); devices.setOnClickListener(v -> chooseDevices());
+        controls.addView(presets); QuestUi.space(controls, 8);
+        InputOptions initialInput = settings.inputOptions();
+        moveInput = check(controls, "Move / hover the PC pointer", initialInput.move);
+        clickInput = check(controls, "Click, hold and drag buttons", initialInput.click);
+        scrollInput = check(controls, "Scroll vertically and horizontally", initialInput.scroll);
+        keyboardInput = check(controls, "Keyboard, IME and pasted text", initialInput.keyboard);
+        moveInput.setOnCheckedChangeListener((b, checked) -> saveInputControls());
+        clickInput.setOnCheckedChangeListener((b, checked) -> saveInputControls());
+        scrollInput.setOnCheckedChangeListener((b, checked) -> saveInputControls());
+        keyboardInput.setOnCheckedChangeListener((b, checked) -> saveInputControls());
+        controls.addView(QuestUi.text(this, "With movement off, clicks use the PC's existing cursor: no hidden position update is sent. Dragging requires movement. Changing input settings releases held input and cancels pending pasted text.", 12, QuestUi.MUTED));
+        QuestUi.space(controls, 16); QuestUi.heading(controls, "Pointer device rules");
+        controls.addView(QuestUi.text(this, "Device rules affect pointer actions only. The keyboard has its own switch above.", 13, QuestUi.MUTED));
+        pointerModes = new RadioGroup(this);
+        String[] sourceModes = { "All pointer devices (unfiltered)", "Block all pointer devices",
+            "Only selected physical pointer devices (experimental)", "All identifiable physical pointer devices except selected" };
+        for (int i = 0; i < sourceModes.length; i++) {
+            RadioButton button = new RadioButton(this); pointerModeIds[i] = View.generateViewId(); button.setId(pointerModeIds[i]); button.setTag(i); button.setMinHeight(QuestUi.dp(this, 48)); button.setTextColor(QuestUi.TEXT);
+            button.setText(sourceModes[i]); pointerModes.addView(button);
+        }
+        pointerModes.check(pointerModeId(settings.pointerMode())); controls.addView(pointerModes);
+        pointerModes.setOnCheckedChangeListener((g, id) -> { if (!applyingProfile) { coordinator.changePointerMode(this, selectedPointerMode()); refreshInputControls(); } });
+        Button devices = QuestUi.button(this, "Choose allowed pointer devices", false); controls.addView(devices); devices.setOnClickListener(v -> chooseDevices(false));
+        Button excluded = QuestUi.button(this, "Choose excluded pointer devices", false); controls.addView(excluded); excluded.setOnClickListener(v -> chooseDevices(true));
         QuestUi.space(controls, 8);
-        controls.addView(QuestUi.text(this, "Quest Home may report hands and controllers as the same Android input device. There is no reliable hand-only switch here. Block all pointer input is the dependable option; it does not disable hand tracking in Home.", 13, QuestUi.MUTED));
+        controls.addView(QuestUi.text(this, "Both filtered modes block unknown, virtual or unidentified Android devices. An empty allowlist blocks every pointer; an empty exclusion list allows all identifiable non-virtual pointers. Unfiltered mode also permits unknown and virtual sources.", 12, QuestUi.MUTED));
+        controls.addView(QuestUi.text(this, "Quest Home may report hands and controllers as the same Android device. Names and descriptors are not proof of physical origin. These rules cannot promise hand-only filtering. Block all pointer devices to prevent every pointer source from controlling the PC; Home hand tracking itself stays on.", 13, QuestUi.MUTED));
+        refreshInputControls();
         QuestUi.space(controls, 22); QuestUi.heading(controls, "Screens & sound");
         audio = check(controls, "Play PC audio in the main window", settings.audio());
         controls.addView(QuestUi.text(this, "Only the main window plays audio. Server audio must also be enabled.", 12, QuestUi.MUTED));
@@ -193,19 +221,49 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("Forget", (d, w) -> { try { settings.forget(endpoint); fingerprint.setText(""); token.setText(""); autoConnect.setChecked(false); showStatus("PC forgotten.", false); }
                     catch (Exception e) { showStatus("Could not update saved PCs.", true); } }).setNegativeButton("Cancel", null).show();
     }
-    private void chooseDevices() {
-        List<InputDevice> devices = new ArrayList<>();
-        for (int id : InputDevice.getDeviceIds()) { InputDevice d = InputDevice.getDevice(id);
-            if (d != null && !d.isVirtual() && (d.getSources() & InputDevice.SOURCE_CLASS_POINTER) != 0 && !d.getDescriptor().isEmpty()) devices.add(d); }
-        if (devices.isEmpty()) { new AlertDialog.Builder(this).setTitle("No physical pointer devices found")
-                .setMessage("Connect a mouse or other Android pointer device first. Selected-devices mode blocks all pointer input when none are selected. Quest may combine hands and controllers, so device selection cannot guarantee hand-only blocking.")
-                .setPositiveButton("OK", null).show(); return; }
-        Set<String> selected = settings.devices(); String[] labels = new String[devices.size()]; boolean[] checks = new boolean[devices.size()];
-        for (int i = 0; i < devices.size(); i++) { InputDevice d = devices.get(i); labels[i] = d.getName() + " (Android device " + d.getId() + ")"; checks[i] = selected.contains(d.getDescriptor()); }
-        new AlertDialog.Builder(this).setTitle("Allowed Android pointer devices")
-                .setMultiChoiceItems(labels, checks, (dialog, which, checked) -> { String id = devices.get(which).getDescriptor(); if (checked) selected.add(id); else selected.remove(id); })
-                .setPositiveButton("Save selection", (dialog, which) -> { settings.devices(selected); coordinator.notifyPolicy(); showStatus("Device selection saved. Choose selected-devices mode to apply it.", false); })
-                .setNegativeButton("Cancel", null).show();
+    private int pointerModeId(int mode) { return pointerModeIds[mode >= 0 && mode < pointerModeIds.length ? mode : PointerPolicy.BLOCK]; }
+    private int selectedPointerMode() {
+        View selected = pointerModes.findViewById(pointerModes.getCheckedRadioButtonId());
+        return selected != null && selected.getTag() instanceof Integer ? (Integer) selected.getTag() : PointerPolicy.BLOCK;
+    }
+    private void saveInputControls() {
+        if (applyingProfile || pointerModes == null) return;
+        coordinator.changeInputOptions(this, new InputOptions(selectedPointerMode(),
+            moveInput.isChecked(), clickInput.isChecked(), scrollInput.isChecked(), keyboardInput.isChecked()));
+        refreshInputControls();
+    }
+    private void refreshInputControls() {
+        if (pointerModes == null) return;
+        InputOptions options = settings.inputOptions(); applyingProfile = true;
+        moveInput.setChecked(options.move); clickInput.setChecked(options.click); scrollInput.setChecked(options.scroll); keyboardInput.setChecked(options.keyboard);
+        pointerModes.check(pointerModeId(options.pointerMode)); presetStatus.setText("Active preset: " + options.presetLabel());
+        applyingProfile = false;
+    }
+    private void chooseDevices(boolean excluded) {
+        Set<String> selected = excluded ? settings.excludedDevices() : settings.devices();
+        java.util.LinkedHashMap<String, String> entries = new java.util.LinkedHashMap<>();
+        for (int id : InputDevice.getDeviceIds()) {
+            InputDevice d = InputDevice.getDevice(id);
+            if (d != null && !d.isVirtual() && (d.getSources() & InputDevice.SOURCE_CLASS_POINTER) != 0 && !d.getDescriptor().isEmpty()) {
+                entries.put(d.getDescriptor(), metadataLabel(d.getName(), 80) + " (Android " + d.getId() + ", vendor " + d.getVendorId() + ", product " + d.getProductId() + ")");
+            }
+        }
+        for (String descriptor : selected) if (!entries.containsKey(descriptor)) entries.put(descriptor, "Saved device, currently absent: " + metadataLabel(descriptor, 64));
+        if (entries.isEmpty()) { new AlertDialog.Builder(this).setTitle("No identifiable physical pointers found")
+            .setMessage("Connect a mouse or another Android pointer device first. Both filtered modes reject unknown and virtual sources. Android may combine hands and controllers, so device filtering cannot guarantee hand-only blocking.")
+            .setPositiveButton("OK", null).show(); return; }
+        List<String> descriptors = new ArrayList<>(entries.keySet()); String[] labels = new String[descriptors.size()]; boolean[] checks = new boolean[descriptors.size()];
+        for (int i = 0; i < descriptors.size(); i++) { labels[i] = entries.get(descriptors.get(i)); checks[i] = selected.contains(descriptors.get(i)); }
+        new AlertDialog.Builder(this).setTitle(excluded ? "Excluded Android pointer devices" : "Allowed Android pointer devices")
+            .setMultiChoiceItems(labels, checks, (dialog, which, checked) -> { String id = descriptors.get(which); if (checked) selected.add(id); else selected.remove(id); })
+            .setPositiveButton("Save selection", (dialog, which) -> {
+                if (excluded) settings.excludedDevices(selected); else settings.devices(selected);
+                coordinator.notifyPolicy(); refreshInputControls();
+                showStatus(excluded ? "Exclusions saved. Choose the 'except selected' device rule to apply them." : "Allowlist saved. Choose the 'only selected' device rule to apply it.", false);
+            }).setNeutralButton("Clear list", (dialog, which) -> {
+                if (excluded) settings.excludedDevices(new HashSet<>()); else settings.devices(new HashSet<>());
+                coordinator.notifyPolicy(); refreshInputControls(); showStatus(excluded ? "Exclusion list cleared." : "Allowlist cleared.", false);
+            }).setNegativeButton("Cancel", null).show();
     }
     private void showDiagnostics() {
         TextView content = QuestUi.text(this, diagnosticsSnapshot(), 12, QuestUi.TEXT); content.setTypeface(android.graphics.Typeface.MONOSPACE); content.setPadding(24, 16, 24, 16);
@@ -246,7 +304,7 @@ public final class MainActivity extends Activity {
         ConnectionCoordinator.Connection c = coordinator.current();
         sessionStatus.setText(c == null ? coordinator.lastStatus : (c.connected ? "Connected to " : "Session for ") + c.endpoint.key() + "\n" + coordinator.lastStatus);
         resumeButton.setVisibility(c == null ? View.GONE : View.VISIBLE); disconnectButton.setVisibility(c == null ? View.GONE : View.VISIBLE);
-        applyingProfile = true; pointerModes.check(100 + settings.pointerMode()); applyingProfile = false;
+        refreshInputControls();
     }
     @Override public void onConfigurationChanged(android.content.res.Configuration config) {
         super.onConfigurationChanged(config);

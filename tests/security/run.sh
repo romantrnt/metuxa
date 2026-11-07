@@ -22,3 +22,4 @@ read -r port pin token < "$work/server"
 "$JAVA" -cp "$work" com.metashare.client.SecureTransportTest "$vector" "$port" "$pin" "$token"
 wait "$server_pid"
 server_pid=
+JAVAC="$JAVAC" JAVA="$JAVA" sh tests/security/run-input-queue.sh

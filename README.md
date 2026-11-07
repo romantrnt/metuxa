@@ -11,16 +11,16 @@ metuxa develops [MetaShare](https://github.com/makemake-kbo/metashare), starting
 - Up to three panels: a physical desktop and optional virtual monitors. Single-window capture is available as a separate, view-only portal mode, subject to desktop support.
 - H.265/H.264, hardware encoding where available and software fallback, paced RTP, loss feedback and retransmission.
 - System audio or no audio. The primary panel owns audio so opening extra panels does not duplicate playback. Microphone capture is not exposed as a supported feature.
-- A shared pointer policy across Quest panels. Blocking remote pointer input leaves Horizon Home hand tracking and the laptop's own physical mouse/keyboard alone.
+- Shared, saved input controls across Quest panels: movement/hover, clicks/drag, scroll and keyboard independently. Full remote, Keyboard only, View only and Custom presets; physical-pointer allow/deny lists. Home hand tracking and the laptop's own physical mouse/keyboard are not changed.
 - Protected control and media: pinned TLS, a random per-run pairing secret, AES-256-GCM RTP/RTCP, replay checks, no plaintext fallback.
 
 ## First test
 
 1. Stop the old MetaShare stream yourself when ready to test. Keep the original APK and server installed for rollback.
 2. Start `metuxa-control` from the supplied test folder. Choose one desktop, 72 fps, HEVC, and system audio. Remote control is off by default; enable it before Start if wanted.
-3. Press Start and answer the desktop's capture/control permission dialog. A refused control request must show view-only capability.
+3. Press Start and answer the desktop's capture/control permission dialog. Capture granted without input devices must show view-only capability. Cancelling or rejecting the request stops that attempt rather than opening another permission picker.
 4. Open the separate metuxa APK on Quest. Choose the PC or enter its IPv4 address. Enter the exact SHA-256 fingerprint and pairing code shown on the PC, then Connect. Never approve a fingerprint that does not match the PC.
-5. Try the shared pointer setting. **Block pointer** prevents all pointer forwarding from video panels, including hands, controller rays and a mouse connected to Quest. Keyboard forwarding is a separate choice.
+5. Try the shared pointer setting. **Block pointer** prevents all pointer forwarding from video panels, including hands, controller rays and a mouse connected to Quest. Keyboard forwarding has its own toggle. With movement disabled, allowed clicks act at the existing laptop cursor; no new coordinates are sent.
 6. Disconnect and stop the server after use. Restarting the server invalidates the previous pairing details.
 
 Both devices still need a reachable local network. The default discovery port is UDP 7877; TLS signaling is TCP 7878, 7879 and 7880 for panels 1–3; encrypted media uses negotiated UDP ports. The legacy application uses different ports and identity. Do not expose this test build to the public internet.

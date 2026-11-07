@@ -20,7 +20,7 @@ Use JDK17 and Gradle8.7 with Android SDK platform/build tools configured by `AND
 
 ```sh
 cd client/quest
-gradle --no-daemon assembleDebug lintDebug testDebugUnitTest
+gradle --no-daemon assembleDebug lintDebug testCore
 ```
 
 The metuxa application ID is separate from legacy MetaShare, so a test install does not overwrite the working old app. Debug signatures are not public release signatures. Never uninstall an existing app to work around a signature mismatch without reviewing the data loss.

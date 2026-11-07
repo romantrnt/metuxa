@@ -7,6 +7,7 @@ import java.util.function.Consumer;
 /** The only bridge from local input into a live, selected connection. */
 final class SessionInputForwarder implements RemoteInputController.Listener {
     private StreamSession session;
+    private InputOptions options = InputOptions.full();
     private boolean connected, inputCapable, draining, announcingText;
     private Consumer<String> status = message -> {};
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -27,23 +28,29 @@ final class SessionInputForwarder implements RemoteInputController.Listener {
     void connected() { state.clearDisconnected(); connected = true; }
     void disconnected() { cancelKeyboard(); connected = false; inputCapable = false; state.clearDisconnected(); }
     void inputCapability(boolean enabled) { if (!enabled) releaseAll(); inputCapable = enabled; }
+    public void onInputPolicy(InputOptions next) {
+        cancelKeyboard();
+        state.configure(next);
+        if (ready()) session.releaseAllInput(); // discard every queued event from the old policy
+        options = next;
+    }
     private boolean ready() { return session != null && connected && inputCapable; }
     public void onPointerInput(RemoteInputController.PointerEvent e) {
         if (ready()) state.pointer(e.action, e.x, e.y, e.verticalScroll, e.horizontalScroll, e.buttons);
     }
     public void onTextInput(String text) {
-        if (!ready() || text == null) return;
+        if (!ready() || !options.keyboard || text == null) return;
         if (!keyboard.text(text)) { status.accept("Text was not sent: at most 4096 pending characters. Wait for the current text or paste a smaller piece."); return; }
         if (text.length() > 32) { announcingText = true; status.accept("Sending pasted text… Keep this window focused until it finishes."); }
         if (!draining) pump();
     }
     public void onKeyInput(int keysym, boolean down) {
-        if (!ready()) return;
+        if (!ready() || !options.keyboard) return;
         if (!draining && keyboard.size() == 0) { state.key(keysym, down); return; }
         if (!keyboard.key(keysym, down)) { releaseAll(); status.accept("Keyboard queue full. Pending input cancelled; please try again."); }
     }
     private void pump() {
-        if (!ready()) { cancelKeyboard(); return; }
+        if (!ready() || !options.keyboard) { cancelKeyboard(); return; }
         draining = true;
         // 160 characters/sec => at most 320 key transitions/sec, below the host
         // flood limit and leaving headroom for pointer and normal physical keys.
@@ -53,7 +60,7 @@ final class SessionInputForwarder implements RemoteInputController.Listener {
     }
     private void cancelKeyboard() {
         main.removeCallbacks(pumpTask);
-        if (keyboard.size() > 0 && announcingText) status.accept("Pending text cancelled because this window lost focus or disconnected. Some text may already have arrived.");
+        if (keyboard.size() > 0 && announcingText) status.accept("Pending text cancelled because input settings changed, focus was lost or the session disconnected. Some text may already have arrived.");
         keyboard.clear(); draining = announcingText = false;
     }
     public void releasePointer() { state.releasePointer(); }

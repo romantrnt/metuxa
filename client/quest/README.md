@@ -26,28 +26,65 @@ AES-GCM key, bound to their endpoint. Pairing data is excluded from backups and
 Android device transfers. Forget removes the saved pairing and auto-connect
 preference; it does not silently disconnect an existing session.
 
-## Pointer and hand tracking
+## Granular remote input and hand tracking
 
-The setting applies immediately to **all current and future metuxa windows**:
+Four independent switches are persisted globally and apply immediately to
+**all current and future metuxa windows**:
 
-- **Full pointer input** forwards pointer movement, clicks and scroll.
-- **Block all remote pointer input** blocks every pointer source inside remote
-  content, while retaining remote keyboard input and local app controls.
-- **Selected physical devices (experimental)** allows only the Android pointer
-  device descriptors you select. Virtual or unknown devices and an empty
-  allowlist are blocked. Replugging can change a device's identity.
+- **Move / hover**: whether remote pointer coordinates are sent.
+- **Click, hold and drag buttons**: whether pointer buttons can be pressed.
+- **Scroll**: vertical and horizontal wheel input.
+- **Keyboard, IME and pasted text**: all remote keyboard paths, including queued
+  paste delivery. This switch is independent of pointer-device rules.
 
-Quest Home may expose hands and controllers as identical Android MotionEvents
-or as the same input device. The app **cannot promise hand-only filtering**.
-Blocking all remote pointer input is the dependable option for preventing hands
-from manipulating the PC; it does not turn off hand tracking elsewhere in Home.
-Device selection is not a security boundary or proof of a physical device's origin.
+Click-only is supported: when movement is off, clicks occur at the **existing
+PC cursor position**, without a hidden coordinate update. Dragging requires
+movement. Movement-only never presses buttons; scroll-only never sends a
+pointer position or click.
 
-Switching pointer modes releases held pointer buttons. Cancellation, loss of
-window focus, pause, disconnect and destroyed surfaces clean up held input.
-Every pointer, hardware-key and IME path checks the resumed/window-focus gate;
-late events after leaving a panel are not forwarded. A fresh contact or neutral
-pointer state is required after a policy/focus change.
+**Full remote**, **Keyboard only** and **View only** presets set the real
+switches. The displayed active preset is derived from the effective settings;
+other combinations show **Custom**, rather than retaining a misleading preset
+name. The default remains full client-side input, while server permission still
+controls whether any remote input is accepted.
+
+A separate pointer-device rule offers:
+
+- **All pointer devices (unfiltered)**, including unknown and virtual sources.
+- **Block all pointer devices**, regardless of action switches. The independent
+  keyboard setting and native launcher/toolbar controls remain available.
+- **Only selected physical pointer devices (experimental)**, using an explicit
+  Android device-descriptor allowlist.
+- **All identifiable physical pointer devices except selected**, using a
+  separate device-descriptor exclusion list.
+
+Both filtered modes deliberately reject unknown, virtual and unidentified
+Android devices. An empty allowlist blocks every pointer; an empty exclusion
+list allows identifiable non-virtual pointers only. Saved absent devices can be
+removed from either list, and replugging may change an Android identity.
+
+Quest Home may expose hands and controllers as identical MotionEvents or as the
+same Android device. Device names/descriptors are not proof of physical origin;
+these filters **cannot promise hand-only blocking**. Blocking every remote
+pointer is the dependable option when no pointer source should control the PC.
+It does not disable hand tracking elsewhere in Home.
+
+Every policy change releases held pointer buttons and modifiers, clears scroll
+remainders, cancels queued paste and invalidates unsent transport input. Old
+Android events and old IME connections cannot resume after a policy change.
+After rearming, each physical pointer must report a neutral button state before
+pressed events are accepted; a new zero-button touch contact may begin directly.
+Fresh key-down events are required as well. An active pointer gesture belongs
+to one Android device, so another device cannot interrupt its drag. Removing
+the owning device releases its buttons. This ownership remains active when
+click output is disabled, allowing the permitted movement and scroll to continue. The keyboard remains enabled unless its own switch is off, but
+an in-progress paste is intentionally cancelled when any input policy changes.
+
+An event already claimed for a network write cannot be recalled. The sender
+orders release-all after that event and before any new-policy input; no UI
+thread waits on the socket. Cancellation, focus loss, pause, disconnect and
+surface destruction also release input. Native app controls remain usable even
+in View only or with every pointer source blocked.
 
 ## Keyboard, windows and sound
 
@@ -93,7 +130,7 @@ runtime, but cannot establish a reliable hand/controller distinction on its own.
 - `MainActivity`: launcher, pairing and settings.
 - `ConnectionCoordinator`: one selected connection and global pointer policy.
 - `BaseStreamActivity` / `StreamActivity` / `MonitorActivity`: panel lifecycle.
-- `InputLifecycle`, `PointerPolicy`, `InputState`, `KeyboardQueue`: isolated
+- `InputOptions`, `InputLifecycle`, `PointerPolicy`, `InputState`, `KeyboardQueue`: isolated
   state machines covered by executable Java tests.
 - `StreamSession` / `SecureTransport` / `RtpReceiver`: authenticated transport.
 

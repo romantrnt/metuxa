@@ -18,7 +18,7 @@ This is an application-specific envelope built from standard TLS/AES-GCM primiti
 
 The server starts view-only unless remote control is explicitly selected. Only the desktop portal can grant capture/control. The live input gate can revoke forwarding but cannot grant a permission not obtained when capture started. Held remote keys and buttons are released on disconnect, disable and orderly shutdown. Physical host input is not intercepted.
 
-No global hand-tracking permission is changed. A block policy applies only to pointer forwarding from metuxa's video surfaces; its own controls and Home remain usable. IME text cannot reliably reveal whether a hand or a controller selected a virtual key, so allowing keyboard input does not mean “no hand-originated text”.
+No global hand-tracking permission is changed. Movement/hover, clicks/drag and scroll have independent global action gates, and keyboard has its own gate. These policies apply only to forwarding from metuxa's video surfaces; its own controls and Home remain usable. Disabling movement never forwards coordinates, so permitted clicks target the current host cursor. Filtered device modes use Android descriptors and reject unknown/virtual sources; they are convenience filters, not attestation of a device's physical origin. IME text cannot reliably reveal whether a hand or a controller selected a virtual key, so allowing keyboard input does not mean “no hand-originated text”.
 
 ## Operational limits
 

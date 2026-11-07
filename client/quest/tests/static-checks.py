@@ -34,7 +34,7 @@ assert "ACTION_CANCEL" in capture and "ACTION_HOVER_EXIT" in capture
 assert "TYPE_TEXT_FLAG_NO_SUGGESTIONS" in capture and "IME_FLAG_NO_PERSONALIZED_LEARNING" in capture
 assert "TextWatcher" not in capture
 assert "lifecycle.allowsInput() && activity.hasWindowFocus()" in capture
-assert "if (!acceptsInput()) return true;" in capture
+assert "event.getEventTime() <= rearmAtMs" in capture
 assert "input.setResumed(false)" in panel
 assert "input.setWindowFocused(focused)" in panel
 ledger = (src / "SessionInputForwarder.java").read_text()
@@ -44,4 +44,26 @@ meta = (src / "InputDiagnostics.java").read_text()
 assert "FileOutputStream" not in meta and "Log." not in meta and "getX(" not in meta
 assert "AES/GCM/NoPadding" in (src / "CredentialVault.java").read_text()
 assert "updateAAD" in (src / "CredentialVault.java").read_text()
+assert "epoch == keyboardEpoch && options.keyboard && acceptsInput()" in capture
+assert "event.getRepeatCount() > 0 && !heldHardware.contains(code)" in capture
+assert "listener.onInputPolicy(options)" in capture
+assert "settings.inputOptions()" in capture
+assert "settings.excludedDevices()" in capture
+assert "state.configure(next)" in ledger and "cancelKeyboard()" in ledger
+assert "!ready() || !options.keyboard" in ledger
+settings = (src / "AppSettings.java").read_text()
+for key in ("MOVE", "CLICK", "SCROLL", "KEYBOARD"):
+    assert "putBoolean(InputOptions." + key in settings
+assert '"excluded_devices"' in settings
+assert "refreshInputControls()" in main and "options.presetLabel()" in main
+assert "chooseDevices(true)" in main and "chooseDevices(false)" in main
+assert "All identifiable physical pointer devices except selected" in main
+assert "pointerOwnership.gate" in capture
+assert capture.index("decision == PointerOwnership.IGNORE") < capture.index("action == MotionEvent.ACTION_CANCEL")
+assert "registerInputDeviceListener(deviceListener" in capture
+assert "unregisterInputDeviceListener(deviceListener)" in capture
+assert "pointerOwnership.removed(deviceId)" in capture
+assert "input.releaseHeldKey(event)" in panel
+assert panel.index("input.releaseHeldKey(event)") < panel.index("focused instanceof android.widget.Button")
+assert "return super.dispatchKeyEvent(event);" in panel
 print("metuxa architecture: static invariants passed")

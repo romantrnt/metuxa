@@ -46,11 +46,16 @@ final class ConnectionCoordinator {
         settings.pointerMode(mode);
         notifyPolicy();
     }
+    void changeInputOptions(Context context, InputOptions options) {
+        AppSettings settings = new AppSettings(context); settings.inputOptions(options);
+        if (options.pointerMode != PointerPolicy.BLOCK) settings.preferences.edit().putInt("previous_pointer_mode", options.pointerMode).apply();
+        notifyPolicy();
+    }
     void togglePointer(Context context) {
         AppSettings settings = new AppSettings(context);
         int next = settings.pointerMode() == PointerPolicy.BLOCK
                 ? settings.preferences.getInt("previous_pointer_mode", PointerPolicy.FULL) : PointerPolicy.BLOCK;
-        changePointerMode(context, next == PointerPolicy.BLOCK ? next : next == PointerPolicy.DEVICES ? next : PointerPolicy.FULL);
+        changePointerMode(context, next == PointerPolicy.BLOCK ? next : next == PointerPolicy.DEVICES || next == PointerPolicy.EXCEPT_DEVICES ? next : PointerPolicy.FULL);
     }
     void notifyPolicy() { for (Panel p : new ArrayList<>(panels)) p.policyChanged(); }
 }

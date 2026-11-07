@@ -17,6 +17,14 @@ final class AppSettings {
     void pointerMode(int mode) { preferences.edit().putInt("pointer_mode", mode).apply(); }
     Set<String> devices() { return new HashSet<>(preferences.getStringSet("devices", new HashSet<>())); }
     void devices(Set<String> devices) { preferences.edit().putStringSet("devices", new HashSet<>(devices)).apply(); }
+    Set<String> excludedDevices() { return new HashSet<>(preferences.getStringSet("excluded_devices", new HashSet<>())); }
+    void excludedDevices(Set<String> devices) { preferences.edit().putStringSet("excluded_devices", new HashSet<>(devices)).apply(); }
+    InputOptions inputOptions() { return InputOptions.read(pointerMode(), preferences::getBoolean); }
+    void inputOptions(InputOptions options) {
+        preferences.edit().putInt("pointer_mode", options.pointerMode)
+            .putBoolean(InputOptions.MOVE, options.move).putBoolean(InputOptions.CLICK, options.click)
+            .putBoolean(InputOptions.SCROLL, options.scroll).putBoolean(InputOptions.KEYBOARD, options.keyboard).apply();
+    }
     boolean audio() { return preferences.getBoolean("audio", true); }
     int monitors() { return Math.max(1, Math.min(3, preferences.getInt("monitors", 1))); }
     boolean reconnect() { return preferences.getBoolean("reconnect", true); }

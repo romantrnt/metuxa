@@ -14,7 +14,6 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLHandshakeException;
@@ -39,9 +38,7 @@ public final class StreamSession {
     private Thread worker;
     private volatile Socket signalingSocket;
     private volatile VideoDecoder videoDecoder;
-    private final ArrayDeque<String> inputQueue=new ArrayDeque<>();
-    private volatile boolean inputOpen;
-    private static final int INPUT_QUEUE_CAP=512;
+    private final SessionInputQueue inputQueue=new SessionInputQueue(512);
     private String host,fingerprint,pairingToken;
     private int basePort;
     private boolean audioEnabled;
@@ -72,8 +69,8 @@ public final class StreamSession {
         worker=new Thread(this::runLoop,"MetuxaStream-"+monitorIndex); worker.start();
     }
     public synchronized void stop() {
-        running=false; inputOpen=false;
-        synchronized(inputQueue) { inputQueue.clear(); inputQueue.notifyAll(); }
+        running=false;
+        inputQueue.close();
         closeSignalingSocket();
         if(worker!=null) worker.interrupt();
     }
@@ -84,24 +81,9 @@ public final class StreamSession {
     public void sendPointerButton(int button,boolean pressed) { enqueueInput("b "+button+(pressed?" 1":" 0")); }
     public void sendScroll(int vertical,int horizontal) { enqueueInput("s "+vertical+" "+horizontal); }
     public void sendKey(int keysym,boolean pressed) { enqueueInput("k "+keysym+(pressed?" 1":" 0")); }
-    /** Server-side release-all, ordered ahead of any newly generated input. */
-    public void releaseAllInput() {
-        synchronized(inputQueue) {
-            inputQueue.clear();
-            if(inputOpen) inputQueue.addLast("INPUT r");
-            inputQueue.notifyAll();
-        }
-    }
-    private void enqueueInput(String body) {
-        synchronized(inputQueue) {
-            if(!inputOpen) return;
-            if(body.charAt(0)=='m' && !inputQueue.isEmpty() && inputQueue.peekLast().startsWith("INPUT m ")) inputQueue.pollLast();
-            // Never silently drop a key/button release. Resynchronize the server
-            // before the newest event instead of retaining stale held input.
-            if(inputQueue.size()>=INPUT_QUEUE_CAP) { inputQueue.clear(); inputQueue.addLast("INPUT r"); }
-            inputQueue.addLast("INPUT "+body); inputQueue.notifyAll();
-        }
-    }
+    /** Invalidates old unclaimed input; release follows any already-claimed write. */
+    public void releaseAllInput() { inputQueue.releaseAll(); }
+    private void enqueueInput(String body) { inputQueue.offer(body); }
     private void runLoop() {
         try {
             int retry=0;
@@ -198,21 +180,26 @@ public final class StreamSession {
             receiver.start(0);
             sendLine(sigOut,"READY {\"port\":"+receiver.getLocalPort()+"}");
             if(!"START".equals(sigIn.readLine())) throw new IOException("Expected START");
-            if(!running) return;
+            final SessionInputQueue.Session inputSession;
+            synchronized(this) {
+                if(!running) return;
+                inputSession=inputQueue.open(canInput);
+            }
             main.post(()->{ listener.onInputCapability(canInput); listener.onConnected(); });
             receiver.requestKeyframe();
             final Object writeLock=new Object();
-            synchronized(inputQueue) { inputQueue.clear(); inputOpen=canInput; }
             inputSender=new Thread(()->{
                 try {
                     while(sessionActive.get() && running) {
-                        String line;
-                        synchronized(inputQueue) {
-                            while(inputQueue.isEmpty() && sessionActive.get() && running) inputQueue.wait();
+                        SessionInputQueue.Pending pending=inputQueue.take(inputSession);
+                        if(pending==null) return;
+                        synchronized(writeLock) {
                             if(!sessionActive.get() || !running) return;
-                            line=inputQueue.pollFirst();
+                            // Claim only after waiting for any heartbeat write.
+                            // UI policy changes never wait for this socket lock.
+                            String line=inputQueue.claim(inputSession,pending);
+                            if(line!=null) sendLine(sigOut,line);
                         }
-                        synchronized(writeLock) { sendLine(sigOut,line); }
                     }
                 } catch(InterruptedException ignored) { Thread.currentThread().interrupt(); }
                 catch(IOException disconnected) { try { socket.close(); } catch(IOException ignored) {} }
@@ -226,13 +213,7 @@ public final class StreamSession {
                     if(line==null || "BYE".equals(line)) break;
                     if("INPUT_STATE true".equals(line) || "INPUT_STATE false".equals(line)) {
                         final boolean available=line.endsWith("true");
-                        boolean changed;
-                        synchronized(inputQueue) {
-                            changed=inputOpen!=available;
-                            inputOpen=available;
-                            if(!available) inputQueue.clear();
-                            inputQueue.notifyAll();
-                        }
+                        boolean changed=inputQueue.setEnabled(inputSession,available);
                         if(changed) main.post(()->listener.onInputCapability(available));
                     } else if(!"PING".equals(line)) throw new IOException("Unexpected control message");
                     lastHeartbeat=System.nanoTime();
@@ -243,8 +224,7 @@ public final class StreamSession {
             }
         } finally {
             sessionActive.set(false);
-            inputOpen=false;
-            synchronized(inputQueue) { inputQueue.clear(); inputQueue.notifyAll(); }
+            inputQueue.close();
             closeSignalingSocket(); // unblocks writes before joining the sender
             if(inputSender!=null) {
                 inputSender.interrupt();

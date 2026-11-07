@@ -15,23 +15,29 @@ final class InputState {
     private final Sink sink;
     private final Set<Integer> keys = new HashSet<>();
     private int buttons;
+    private InputOptions options = InputOptions.full();
     private boolean contact;
     private float vertical, horizontal;
     InputState(Sink sink) { this.sink = sink; }
+    void configure(InputOptions next) {
+        // Release under the old policy, then replace it; release events are never gated.
+        releaseAll(); options = next;
+    }
     void pointer(int action, float x, float y, float v, float h, int reportedButtons) {
         // Android constants are stable: DOWN=0 UP=1 MOVE=2 CANCEL=3 HOVER_MOVE=7
         // SCROLL=8 HOVER_ENTER=9 HOVER_EXIT=10 BUTTON_PRESS=11 BUTTON_RELEASE=12.
+        if (!options.pointerActive()) { releasePointer(); return; }
         if (action == 3 || action == 10) { releasePointer(); return; }
         if (!Float.isFinite(x) || !Float.isFinite(y)) { releasePointer(); return; }
-        if (action == 0 && reportedButtons == 0) contact = true;
+        if (options.click && action == 0 && reportedButtons == 0) contact = true;
         if (action == 1) contact = false;
-        if (action == 0 || action == 1 || action == 2 || action == 7 || action == 9 || action == 11 || action == 12) {
+        if (options.move && (action == 0 || action == 1 || action == 2 || action == 7 || action == 9 || action == 11 || action == 12)) {
             if (Float.isFinite(x) && Float.isFinite(y)) sink.move(clamp(x), clamp(y));
         }
         // ACTION_UP terminates contact even if Android's final event contains stale bits.
-        int next = action == 1 ? 0 : (reportedButtons & 7) | (contact ? PRIMARY : 0);
+        int next = !options.click || action == 1 ? 0 : (reportedButtons & 7) | (contact ? PRIMARY : 0);
         transition(next);
-        if (action == 8 && Float.isFinite(v) && Float.isFinite(h)) {
+        if (options.scroll && action == 8 && Float.isFinite(v) && Float.isFinite(h)) {
             vertical += Math.max(-100, Math.min(100, v));
             horizontal += Math.max(-100, Math.min(100, h));
             int vs = (int) vertical, hs = (int) horizontal;
@@ -39,14 +45,14 @@ final class InputState {
         }
     }
     void key(int keysym, boolean down) {
-        if (keysym <= 0) return;
+        if (!options.keyboard || keysym <= 0) return;
         if (down) {
             if (keys.add(keysym)) sink.key(keysym, true);
         } else if (keys.remove(keysym)) sink.key(keysym, false);
     }
     void tap(int keysym) {
         // Do not release a physically held key when IME commits the same keysym.
-        if (keys.contains(keysym)) return;
+        if (!options.keyboard || keys.contains(keysym)) return;
         sink.key(keysym, true); sink.key(keysym, false);
     }
     void releasePointer() { contact = false; transition(0); vertical = horizontal = 0; }

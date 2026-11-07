@@ -83,7 +83,7 @@ abstract class BaseStreamActivity extends Activity implements SurfaceHolder.Call
                 if (primary()) connection.connected = false;
             }); }
             public void onInputCapability(boolean enabled) { runOnUiThread(() -> {
-                if (current()) { inputAvailable = enabled; if (!enabled) input.lostFocus(); forwarder.inputCapability(enabled); if (connection.connected) showStatus(streamingStatus()); else if (!enabled) showStatus("View-only: remote input is disabled on the server"); }
+                if (current()) { inputAvailable = enabled; if (!enabled) input.lostFocus(); forwarder.inputCapability(enabled); if (enabled) input.policyChanged(); if (connection.connected) showStatus(streamingStatus()); else if (!enabled) showStatus("View-only: remote input is disabled on the server"); }
             }); }
         });
         try {
@@ -138,14 +138,18 @@ abstract class BaseStreamActivity extends Activity implements SurfaceHolder.Call
     @Override public void surfaceCreated(SurfaceHolder holder) { surfaceReady = true; startStream(); }
     @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { applyAspectRatio(); }
     @Override public void surfaceDestroyed(SurfaceHolder holder) { surfaceReady = false; stopStream(); }
-    @Override public void policyChanged() { if (input != null) input.policyChanged(); if (toolbar != null) toolbar.setPointerMode(new AppSettings(this).pointerMode()); }
+    @Override public void policyChanged() { if (input != null) input.policyChanged(); if (toolbar != null) toolbar.setInputOptions(new AppSettings(this).inputOptions()); }
     @Override public void disconnectPanel() { stopStream(); finish(); }
     @Override public void onWindowFocusChanged(boolean focused) { super.onWindowFocusChanged(focused); if (input != null) input.setWindowFocused(focused); }
     @Override protected void onPause() { if (input != null) input.setResumed(false); super.onPause(); }
     @Override protected void onResume() { super.onResume(); if (input != null) { input.setResumed(true); input.setWindowFocused(hasWindowFocus()); policyChanged(); } }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        // A remotely pressed key must be released even if focus moved to a
+        // native button meanwhile. Still deliver the event to that local control.
+        boolean releasedRemoteKey = input != null && input.releaseHeldKey(event);
         View focused = getCurrentFocus();
-        if (input != null && !(focused instanceof android.widget.Button) && !(focused instanceof android.widget.EditText) && input.handleKey(event)) return true;
+        if (focused instanceof android.widget.Button || focused instanceof android.widget.EditText) return super.dispatchKeyEvent(event);
+        if (releasedRemoteKey || input != null && input.handleKey(event)) return true;
         return super.dispatchKeyEvent(event);
     }
     @Override public void onBackPressed() {
