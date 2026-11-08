@@ -82,7 +82,7 @@ For a clean collection retry, remove only the generated `.release-work/AppDir`, 
 
 The release workflow checks:
 
-- Ubuntu-baseline compile and all five Meson test suites.
+- Ubuntu-baseline compile and all six Meson test suites.
 - CLI help/validation and codec registration without capture or network.
 - No unresolved linked libraries in the collected ELF closure, with glibc/loader supplied by the target OS.
 - Private Weston UI tests using the packaged libraries, synthetic mock-server events and no host display, session bus, PipeWire socket, GPU/input devices or network. These cover presets/source constraints, pairing visibility, live-input gates, close cancellation and shutdown. The actual packaged control executable also starts in that isolated session.

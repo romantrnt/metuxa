@@ -7,6 +7,7 @@
 #include <csignal>
 #include <iostream>
 #include <mutex>
+#include <openssl/err.h>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -17,9 +18,13 @@ using namespace std::chrono_literals;
 static void check(bool value,const char* what) { if(!value) { std::cerr<<"FAIL pairing: "<<what<<'\n'; std::abort(); } }
 template<class F> static bool eventually(F f) { for(int i=0;i<400;++i) { if(f())return true; std::this_thread::sleep_for(5ms); } return f(); }
 struct Events {
-    std::mutex mutex; std::vector<std::string> values;
-    bool emit(const std::string& value) { std::lock_guard lock(mutex); values.push_back(value); return true; }
+    std::mutex mutex; std::condition_variable changed; std::vector<std::string> values;
+    bool emit(const std::string& value) { std::lock_guard lock(mutex); values.push_back(value); changed.notify_all(); return true; }
     bool has(const std::string& value) { std::lock_guard lock(mutex); for(auto& e:values)if(e.find(value)!=std::string::npos)return true; return false; }
+    bool wait(const std::string& value) {
+        std::unique_lock lock(mutex);
+        return changed.wait_for(lock,2s,[&] { for(const auto& e:values)if(e.find(value)!=std::string::npos)return true; return false; });
+    }
     std::string last(const std::string& type) { std::lock_guard lock(mutex); for(auto it=values.rbegin();it!=values.rend();++it)if(it->find(type)!=std::string::npos)return *it; return {}; }
 };
 static std::string field(const std::string& value,const std::string& key) {
@@ -39,6 +44,18 @@ struct Client {
     ~Client() { SSL_free(tls); SSL_CTX_free(ctx); ::shutdown(fd,SHUT_RDWR); ::close(fd); }
     void send(const std::string& value) { check(SSL_write(tls,value.data(),value.size())==static_cast<int>(value.size()),"write"); }
     std::string line() { std::string result; char c; while(SSL_read(tls,&c,1)==1) { if(c=='\n')return result; result+=c; check(result.size()<4096,"line bound"); } return result; }
+    bool closed() {
+        ERR_clear_error(); char c; const int n=SSL_read(tls,&c,1);
+        if(n>0)return false; // Any application byte, including a token, fails.
+        const int error=SSL_get_error(tls,n);
+        if(error==SSL_ERROR_ZERO_RETURN || (error==SSL_ERROR_SYSCALL && n==0))return true;
+#ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING
+        // The server closes without close_notify. OpenSSL 3 reports this as an
+        // SSL error; older versions return SSL_ERROR_SYSCALL with zero bytes.
+        if(error==SSL_ERROR_SSL && ERR_GET_REASON(ERR_peek_last_error())==SSL_R_UNEXPECTED_EOF_WHILE_READING)return true;
+#endif
+        return false; // A read timeout is not evidence that the peer closed.
+    }
     std::pair<std::string,std::string> challenge(const std::string& pin,const std::string& nonce) {
         send("PAIR1 "+security::pairing_commitment(pin,nonce)+"\n"); std::istringstream in(line());
         std::string kind,id,server; in>>kind>>id>>server; check(kind=="PAIR_CHALLENGE1" && id.size()==32 && server.size()==64,"challenge");
@@ -104,7 +121,16 @@ static void network_test(int mode) {
                 check(client.line()=="PAIRED1 "+credentials->pairing_code(),"token only after approval");
                 check(client.line().empty(),"pair socket closed without HELLO");
             } else if(mode==6) { client.send("PAIR_REVEAL1 "+nonce+"\n"); check(client.line()=="PAIR_WAIT1","wait extra command"); client.send("INPUT k 65 1\n"); check(client.line().empty(),"input rejected before auth"); }
-            else if(mode==7) { client.send("PAIR_REVEAL1 "+nonce+"\n"); check(client.line()=="PAIR_WAIT1","wait close"); gate->close(); check(client.line()=="ERROR PAIRING","close no token"); }
+            else if(mode==7) {
+                client.send("PAIR_REVEAL1 "+nonce+"\n"); check(client.line()=="PAIR_WAIT1","wait close");
+                // PAIR_WAIT1 is sent before present(). Wait for the status
+                // notification so this case closes an already presented request.
+                // close() acquires the gate lock after that notification returns.
+                check(events.wait("pairing_request"),"request presented before close");
+                gate->close(); check(!gate->decide(id,true),"close refuses stale approval");
+                check(client.line()=="ERROR PAIRING","close after presentation no token");
+                check(client.closed(),"close after presentation ends connection without secrets");
+            }
             else if(mode==8) { check(!gate->decide(id,true),"early network approval refused"); client.send("PAIR_REVEAL1 "+nonce+"\n"); check(client.line()=="PAIR_WAIT1","still needs decision"); }
             else if(mode==9) {
                 timeval timeout{7,0}; setsockopt(client.fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof timeout);
@@ -118,6 +144,14 @@ static void network_test(int mode) {
             } else if(mode==11) {
                 client.send("PAIR_REVEAL1 "+nonce+"\n"); check(client.line()=="ERROR PAIRING","MITM certificate commitment rejected");
                 check(!events.has("pairing_request"),"MITM no approval prompt");
+            } else if(mode==12) {
+                // The server cannot present before receiving the reveal. Close
+                // first, then release that protocol barrier to cover the other
+                // ordering deterministically: present() fails and the peer closes.
+                gate->close(); check(!gate->decide(id,true),"early close refuses stale approval");
+                client.send("PAIR_REVEAL1 "+nonce+"\n"); check(client.line()=="PAIR_WAIT1","wait after early close");
+                check(client.closed(),"close before presentation ends connection without secrets");
+                check(!events.has("pairing_request"),"closed request never presented");
             }
         }
     }
@@ -179,7 +213,7 @@ int main(int argc,char** argv) {
     if(argc>1 && std::string(argv[1])=="--interop")return interop();
     vectors(); gate_tests();
     std::thread slow(expiry_and_limits),network_deadline(network_expiry);
-    for(int i=0;i<12;++i)network_test(i);
+    for(int i=0;i<13;++i)network_test(i);
     slow.join(); network_deadline.join();
     std::cout<<"Pairing C++ tests passed (commit mismatch, injection, cancel, stale IDs, one-shot approval, expiry, limits).\n";
 }
