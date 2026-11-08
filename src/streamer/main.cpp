@@ -167,7 +167,7 @@ constexpr std::uint32_t kChannelAudioMic = 2;
 
 void usage(const char* argv0) {
     std::fprintf(stderr,
-      "metuxa 0.3.0 - protected desktop streaming for Quest\n\n"
+      "metuxa 0.4.0 - protected desktop streaming for Quest\n\n"
       "Usage: %s [options]\n"
       "  --source <portal|window|mutter|test>   desktop, single window, virtual or test\n"
       "  --monitors <1..3>                    one physical + optional virtual displays\n"
@@ -197,7 +197,7 @@ bool parse_args(int argc, char** argv, Options& o) {
         auto val=[&](int& dst){return i+1<argc && app::integer(argv[++i],dst);};
         auto str=[&](std::string& dst){if(i+1>=argc)return false;dst=argv[++i];return true;};
         if(a=="--help" || a=="-h"){usage(argv[0]);std::exit(0);}
-        else if(a=="--version"){std::puts("metuxa 0.3.0 (MetaShare ed13beb lineage, protocol 5)");std::exit(0);}
+        else if(a=="--version"){std::puts("metuxa 0.4.0 (MetaShare ed13beb lineage, protocol 5)");std::exit(0);}
         else if(a=="--validate")o.validate_only=true;
         else if(a=="--source"){if(!str(o.source))return false;}
         else if(a=="--codec"){if(!str(o.codec))return false;}

@@ -22,11 +22,11 @@
 #include <vector>
 
 #ifndef METUXA_VERSION
-#define METUXA_VERSION "0.3.0"
+#define METUXA_VERSION "0.4.0"
 #endif
 namespace metuxa::control {
 namespace {
-constexpr int current_code = 4, protocol = 5;
+constexpr int current_code = 5, protocol = 5;
 constexpr std::uint64_t max_manifest = 16384, max_linux = 512ull * 1024 * 1024, max_android = 256ull * 1024 * 1024;
 constexpr char manifest_url[] = "https://github.com/romantrnt/metuxa/releases/latest/download/update-manifest.txt";
 constexpr char release_root[] = "https://github.com/romantrnt/metuxa/releases/download/v";

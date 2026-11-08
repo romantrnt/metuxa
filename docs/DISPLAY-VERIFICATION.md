@@ -1,6 +1,6 @@
 # Display and appearance fixes
 
-Verified on 2026-11-08 against the development changes following 0.3.0. These results describe local builds, not a newly published release. The source version and Android version code remain unchanged until release preparation.
+Verified on 2026-11-08 against the display and appearance changes in commit `8904c1d`, following 0.3.0. These results describe development builds. Versioned artifacts, signing and publication checks for 0.4.0/code 5 are tracked separately in [release verification](VERIFICATION-0.4.0.md).
 
 ## Behavior
 
@@ -52,4 +52,4 @@ The README screenshots are sanitized renders from these UI tests. They show real
 - If the user changes the physical display's mode in GNOME during sharing, restart sharing to renegotiate it. Metuxa does not modify that display or automatically restart sharing.
 - The real-compositor ASan/UBSan run completed its mode changes without an invalid-access or undefined-behavior finding, but LeakSanitizer failed with 3150 bytes in 34 allocations originating in PipeWire context/module initialization. A separate program containing only `pw_init`, context creation/destruction and `pw_deinit` reproduced exactly the same report. This is not claimed as a clean leak check. The focused metuxa lifecycle and appearance sanitizer suites passed.
 - clang-format and clang-tidy are absent from this computer; `scripts/lint.sh` was not run. No software was installed to hide that gap.
-- No signed update, public release or CI run for a new published commit is claimed. Release versioning, signing, complete packaging inventories and artifact checks remain part of release preparation.
+- These development results do not establish a signed update, public release or CI result for the final release commit. See [0.4.0 verification](VERIFICATION-0.4.0.md) for release-artifact and publication status.

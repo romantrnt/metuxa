@@ -2,7 +2,7 @@
 # Run with mksquashfs from the pinned Ubuntu builder for repeatable packaging.
 set -euo pipefail
 WORK=${WORK:-/work}
-OUTPUT=${1:-$WORK/metuxa-0.3.0-x86_64.AppImage}
+OUTPUT=${1:-$WORK/metuxa-0.4.0-x86_64.AppImage}
 EPOCH=${SOURCE_DATE_EPOCH:-1794096000}
 RUNTIME="$WORK/runtime-build/out/runtime-x86_64"
 [[ -f "$WORK/AppDir/usr/share/metuxa/SOURCE-INDEX.json" && -x "$RUNTIME" ]]

@@ -1,6 +1,6 @@
 # Live acceptance checklist
 
-Use a test desktop and headset you are ready to interrupt. Keep the previous release available for rollback. Record PASS, FAIL or NOT TESTED with the OS/headset versions. [Automated results](VERIFICATION.md) cover isolated sessions and synthetic media; they do not replace these checks.
+Use a test desktop and headset you are ready to interrupt. Keep the previous release available for rollback. Record PASS, FAIL or NOT TESTED with the OS/headset versions. [Automated results](VERIFICATION-0.4.0.md) cover isolated sessions and synthetic media; they do not replace these checks.
 
 ## Launch and pair
 
@@ -54,7 +54,7 @@ Use a test desktop and headset you are ready to interrupt. Keep the previous rel
 
 ## Installation and updates
 
-- Install signed 0.3.0 over 0.2.0 without uninstalling. Saved preferences must survive and Android app info must show `metuxa v0.3.0`. Record separately what Horizon's Unknown Sources library displays.
+- Install signed 0.4.0/code 5 over 0.3.0/code 4 without uninstalling or clearing data. Saved preferences and pairing data must survive, while legacy image-rotation settings must no longer rotate physical screens. Android app info must show `metuxa v0.4.0`. Record separately what Horizon's Unknown Sources library displays.
 - Updates start disabled. Enable checks and optional automatic downloads. A downloaded release must never install by itself, and an installer prompt must not interrupt active streaming.
-- Exercise the first future signed update: check, download cancellation/retry, permission denial, Android confirmation cancellation, installation, insufficient storage and process death. Settings must survive. Changed signers, modified assets and older releases must be rejected.
+- Use the 0.3.0 in-app updater to exercise the signed 0.4.0 update: check, download cancellation/retry, permission denial, Android confirmation cancellation, installation, insufficient storage and process death. Settings must survive. Changed signers, modified assets and older releases must be rejected.
 - Keep the previous AppImage and test from a private user-writable directory. Check automatic download, explicit installation, restart and manual rollback. Read-only files, symlinks and hard links must receive a useful error. See [Updates](UPDATES.md).

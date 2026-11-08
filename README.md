@@ -81,11 +81,11 @@ Default network ports: discovery **UDP 7877**, TLS control **TCP 7878–7880** f
 
 Open **Settings** on the PC or Quest. Quest has separate top/bottom panel modes: always visible, visible on hover, or hidden after a delay. Tap **Controls** to keep the bars open when using hands or a controller. A physical monitor stays as it is on the PC. Supported virtual monitors can switch between portrait and landscape, changing the desktop resolution so applications reflow with upright content. This affects only the selected virtual monitor. See [Monitor orientation](docs/ORIENTATION.md) for support and limits.
 
-Before opening the first stream panel, Quest reads its dimensions over the authenticated connection without starting media, then supplies window-size hints. Saved dimensions or landscape defaults are used if this short check is unavailable. Horizon controls the final outer window size and may preserve a size chosen previously. The PC’s **System** theme follows the desktop appearance preference, including changes while the app is open.
+Before opening the first stream panel, Quest reads its dimensions over the authenticated connection without starting media, then supplies window-size hints. Saved dimensions or landscape defaults are used if this short check is unavailable. Horizon controls the final outer window size and may preserve a size chosen previously or ignore the hints. The PC’s **System** theme follows the desktop appearance preference, including changes while the app is open.
 
-Updates are hosted by GitHub and signed with the release key. Choose manual checks, notifications or automatic downloads; installation remains explicit. The APK keeps `dev.metuxa.quest` and its signing identity, while its visible name follows the release, for example **metuxa v0.3.0**. Some Horizon library views may choose to display the package ID; Android's application label cannot force those views to change.
+Updates are hosted by GitHub and signed with the release key. Choose manual checks, notifications or automatic downloads; installation remains explicit. The APK keeps `dev.metuxa.quest` and its signing identity, while its visible name follows the release, for example **metuxa v0.4.0**. Some Horizon library views may choose to display the package ID; Android's application label cannot force those views to change.
 
-Install 0.3.0 over 0.2.0 manually once. The old release has no updater. Do not uninstall a release-signed APK to upgrade it. Read [Updates](docs/UPDATES.md) for signature checks, rollback, permissions and the first-install transition.
+Version 0.3.0 can download the signed 0.4.0 update; installation remains explicit. From 0.2.0, install 0.4.0 manually because that older release has no updater. Do not uninstall a release-signed APK to upgrade it. Read [Updates](docs/UPDATES.md) for signature checks, rollback, permissions and the first-install transition.
 
 ## Input without surprises
 
@@ -119,7 +119,7 @@ gradle --no-daemon :app:assembleDebug :app:lintDebug :app:testCore
 
 ## Scope and verification
 
-Automated tests cover protocol parsing, input lifecycle, authenticated transport, cross-language interoperability, process supervision and synthetic streaming. They do not establish real-headset latency, comfort, hardware codec reliability or portal compatibility. Read the [verification record](docs/VERIFICATION.md) and [live acceptance checklist](docs/MANUAL-TESTS.md) for what was and was not tested.
+Automated tests cover protocol parsing, input lifecycle, authenticated transport, cross-language interoperability, process supervision and synthetic streaming. They do not establish real-headset latency, comfort, hardware codec reliability or portal compatibility. Read the [verification record](docs/VERIFICATION-0.4.0.md) and [live acceptance checklist](docs/MANUAL-TESTS.md) for what was and was not tested.
 
 The media transport uses standard TLS and AES-GCM primitives in an application-specific protocol. It has **not received an independent security audit**. Use a trusted local network and read the [security model](docs/SECURITY.md). Vulnerability reporting guidance is in [SECURITY.md](SECURITY.md).
 
