@@ -15,7 +15,8 @@ PY
 PAYLOAD=$(mktemp "$WORK/payload.XXXXXXXX")
 trap 'rm -f "$PAYLOAD"' EXIT
 mksquashfs "$WORK/AppDir" "$PAYLOAD" -noappend -all-root -no-xattrs \
-  -all-time "$EPOCH" -mkfs-time "$EPOCH" -b 1048576 -comp xz -processors 2
+  -all-time "$EPOCH" -mkfs-time "$EPOCH" -b 1048576 -comp zstd -Xcompression-level 15 -processors 2
 cat "$RUNTIME" "$PAYLOAD" > "$OUTPUT"
 chmod 755 "$OUTPUT"
+"$OUTPUT" --appimage-extract-and-run --validate
 sha256sum "$OUTPUT"
