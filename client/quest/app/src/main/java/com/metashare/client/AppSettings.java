@@ -25,6 +25,22 @@ final class AppSettings {
             .putBoolean(InputOptions.MOVE, options.move).putBoolean(InputOptions.CLICK, options.click)
             .putBoolean(InputOptions.SCROLL, options.scroll).putBoolean(InputOptions.KEYBOARD, options.keyboard).apply();
     }
+    int theme() { return bounded("theme", 0, 0, 2); } // 0 dark, 1 light, 2 system
+    int textScale() { return bounded("text_scale", 100, 100, 150); }
+    int topBar() { return bounded("top_bar", PanelVisibility.AUTO_HIDE, 0, 2); }
+    int bottomBar() { return bounded("bottom_bar", PanelVisibility.AUTO_HIDE, 0, 2); }
+    int hideDelay() { return bounded("hide_delay", 4, 2, 15); }
+    int panelOpacity() { return bounded("panel_opacity", 95, 70, 100); }
+    boolean keepAwake() { return preferences.getBoolean("keep_awake", true); }
+    boolean discoverOnOpen() { return preferences.getBoolean("discover_on_open", true); }
+    boolean confirmDisconnect() { return preferences.getBoolean("confirm_disconnect", true); }
+    boolean autoCheckUpdates() { return preferences.getBoolean("auto_check_updates", false); }
+    boolean autoDownloadUpdates() { return preferences.getBoolean("auto_download_updates", false); }
+    int rotation(String host, int monitor) { return MonitorGeometry.rotation(preferences.getInt("rotation:" + host + ":" + monitor, 0)); }
+    void rotation(String host, int monitor, int value) { integer("rotation:" + host + ":" + monitor, MonitorGeometry.rotation(value)); }
+    void integer(String key, int value) { preferences.edit().putInt(key, value).apply(); }
+    void flag(String key, boolean value) { preferences.edit().putBoolean(key, value).apply(); }
+    private int bounded(String key, int fallback, int minimum, int maximum) { return Math.max(minimum, Math.min(maximum, preferences.getInt(key, fallback))); }
     boolean audio() { return preferences.getBoolean("audio", true); }
     int monitors() { return Math.max(1, Math.min(3, preferences.getInt("monitors", 1))); }
     boolean reconnect() { return preferences.getBoolean("reconnect", true); }

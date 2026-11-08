@@ -55,6 +55,8 @@ class Server {
     void client_loop(int fd, const sockaddr_in& peer,
                      const OnConnect& on_connect, const OnMessage& on_message);
 
+    void pairing_loop(int fd, const sockaddr_in& peer, std::string_view commitment, std::string& pending);
+    bool pairing_peer_alive(int fd);
     bool read_line(int fd, std::string& line, std::string& pending, int timeout_ms);
     bool write_line_locked(const std::string& line);
     std::shared_ptr<security::ServerCredentials> credentials_;

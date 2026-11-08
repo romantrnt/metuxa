@@ -27,7 +27,7 @@ assert "monitorIndex >= Math.min(connection.desiredMonitors, connection.availabl
 assert "if (!enabled) input.lostFocus()" in panel
 assert "epoch == streamEpoch" in panel
 assert "onWindowFocusChanged" in panel and "input.lostFocus()" in panel
-assert "surfaceDestroyed(SurfaceHolder holder) { surfaceReady = false; stopStream(); }" in panel
+assert "renderSurfaceDestroyed() { surfaceReady = false; stopStream(); }" in panel
 capture = (src / "RemoteInputController.java").read_text()
 assert "PointerPolicy.permits" in capture and "return true;" in capture
 assert "ACTION_CANCEL" in capture and "ACTION_HOVER_EXIT" in capture
@@ -71,3 +71,24 @@ print("metuxa architecture: static invariants passed")
 # Keep the native palette and platform/dialog themes aligned without a device.
 import runpy
 runpy.run_path(str(root / "tests/theme-checks.py"))
+
+# Display and input share the Android View transform, never a second pointer rotation.
+assert "surface.setMonitorRotation(rotation)" in panel
+assert "MonitorGeometry.fit(" in panel
+assert "viewportParams.topMargin" not in panel and "viewportParams.bottomMargin" not in panel
+assert "setOnHoverListener((v, e) -> capturePointer(e))" in capture
+assert "setOnHoverListener(null)" in capture
+assert "!isChangingConfigurations()" in panel
+assert "pairingDialog == dialog" in main and "attempt[0].confirm()" in main
+assert '"metuxa v${versionName}"' in (root / "app/build.gradle").read_text()
+
+renderer = (src / "RemoteSurfaceView.java").read_text()
+assert "extends TextureView" in renderer and "return false;" in renderer
+assert "renderLease.close()" in (src / "StreamSession.java").read_text()
+
+# Conscrypt close() may write close_notify; Activity stop must only schedule it.
+stream = (src / "StreamSession.java").read_text()
+stop = stream.split("public synchronized void stop()", 1)[1].split("public void sendPointerMove", 1)[0]
+assert "closing.request()" in stop
+assert "closeSignalingSocket()" not in stop and "closing.await()" not in stop and "socket.close()" not in stop
+assert "new SocketShutdown(socket," in stream and "if(!running) return;" in stream

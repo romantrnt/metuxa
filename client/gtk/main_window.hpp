@@ -1,5 +1,11 @@
 #pragma once
 #include "control_model.hpp"
+#include "app_preferences.hpp"
+#include "update_manager.hpp"
+#include <atomic>
+#include <thread>
+#include <mutex>
+#include <chrono>
 #include "server_process.hpp"
 #include "gtkmm_compat.hpp"
 #include <deque>
@@ -12,6 +18,15 @@ public:
 private:
     friend struct ControlUiTest;
     void build_ui();
+    void build_preferences();
+    void apply_preferences();
+    void preferences_changed();
+    void save_app_preferences();
+    void schedule_update_check();
+    void begin_update(int action, bool automatic = false);
+    void update_controls();
+    bool poll_update();
+    void reset_pairing_request();
     Gtk::Widget& row(const std::string& title, const std::string& detail, Gtk::Widget& control);
     Gtk::Label& label(const std::string& text, const std::string& style = "");
     Gtk::Box& section(const std::string& title);
@@ -34,6 +49,36 @@ private:
     void clear_security();
     void copy_text(const std::string& text, const std::string& description);
     metuxa::control::Settings settings_;
+    metuxa::control::AppPreferences preferences_;
+    struct UpdateJob {
+        std::atomic<bool> cancel{false}, done{false};
+        std::atomic<std::uint64_t> downloaded{0}, total{0};
+        int action = 0;
+        bool automatic = false, success = false;
+        metuxa::control::UpdateCheck check = metuxa::control::UpdateCheck::failed;
+        metuxa::control::UpdateInfo info;
+        std::string error, staging, backup;
+    };
+    std::shared_ptr<UpdateJob> update_job_;
+    std::thread update_thread_;
+    metuxa::control::UpdateInfo available_update_;
+    std::string staged_update_, original_theme_;
+    bool original_dark_ = false, preferences_loading_ = false, update_installed_ = false;
+    Glib::RefPtr<Gtk::CssProvider> text_provider_;
+    sigc::connection update_timer_, update_poll_, pairing_timer_;
+    std::chrono::steady_clock::time_point pairing_deadline_;
+    bool pairing_open_ = false;
+    std::string pairing_id_;
+    Gtk::DropDown theme_, updates_, check_interval_;
+    Gtk::SpinButton text_scale_;
+    Gtk::Switch animations_, auto_scroll_, remember_window_;
+    Gtk::Button preferences_button_{"Settings"}, check_update_{"Check now"}, download_update_{"Download update"}, install_update_{"Install update"}, cancel_update_{"Cancel download"}, skip_update_{"Skip this version"};
+    Gtk::Label update_status_, update_detail_;
+    Gtk::ProgressBar update_progress_;
+    Gtk::Box pair_request_box_{Gtk::Orientation::VERTICAL, 12};
+    Gtk::Button pair_open_button_{"Pair a headset"}, pair_accept_{"The codes match"}, pair_reject_{"Reject"};
+    Gtk::Label pair_status_, pair_digits_, pair_peer_;
+    Gtk::CheckButton pair_compared_{"I compared all 10 digits on my headset"};
     metuxa::control::ServerProcess server_;
     Gtk::HeaderBar header_;
     Gtk::Stack stack_;

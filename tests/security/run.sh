@@ -23,3 +23,5 @@ read -r port pin token < "$work/server"
 wait "$server_pid"
 server_pid=
 JAVAC="$JAVAC" JAVA="$JAVA" sh tests/security/run-input-queue.sh
+
+JAVAC="$JAVAC" JAVA="$JAVA" sh tests/security/run-pairing.sh

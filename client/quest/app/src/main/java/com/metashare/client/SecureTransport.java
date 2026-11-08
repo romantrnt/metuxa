@@ -52,6 +52,27 @@ public final class SecureTransport {
         socket.setEnabledProtocols(new String[]{"TLSv1.3","TLSv1.2"});
         return socket;
     }
+    /** Pairing quarantine only: no media, input, pin, or token is sent here.
+     * Identity is established by a committed comparison shown on both devices
+     * and explicit local approval on the PC. Never use this for a stream. */
+    static SSLSocket pairingSocket() throws GeneralSecurityException, IOException {
+        X509TrustManager trust = new X509TrustManager() {
+            @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            @Override public void checkClientTrusted(X509Certificate[] chain,String type) throws CertificateException {
+                throw new CertificateException("Client certificates unsupported");
+            }
+            @Override public void checkServerTrusted(X509Certificate[] chain,String type) throws CertificateException {
+                if(chain==null || chain.length==0) throw new CertificateException("Missing pairing certificate");
+                chain[0].checkValidity();
+            }
+        };
+        SSLContext context=SSLContext.getInstance("TLS");
+        context.init(null,new TrustManager[]{trust},null);
+        SSLSocket socket=(SSLSocket)context.getSocketFactory().createSocket();
+        // Pairing has no compatibility downgrade and cannot renegotiate identity.
+        socket.setEnabledProtocols(new String[]{"TLSv1.3"});
+        return socket;
+    }
     /** Preserves partial lines across socket timeouts, with size/time bounds. */
     public static final class LineReader {
         private final InputStream input;

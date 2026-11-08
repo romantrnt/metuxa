@@ -75,6 +75,10 @@ struct ControlUiTest {
             check(!w.server_.running() && !w.settings_.remote_input && w.settings_.fps == 72, "initial view-only defaults");
             check(!w.copy_code_.get_sensitive() && !w.live_input_box_.get_visible(), "idle controls");
             check(snapshot("stream"), "initial screenshot");
+            w.theme_.set_selected(1); w.text_scale_.set_value(125); w.auto_scroll_.set_active(false);
+            check(w.preferences_.theme == "dark" && w.preferences_.text_percent == 125 && !w.preferences_.auto_scroll, "live preferences");
+            w.theme_.set_selected(2); check(!Gtk::Settings::get_default()->property_gtk_application_prefer_dark_theme(), "light theme");
+            w.theme_.set_selected(0); w.text_scale_.set_value(100); w.auto_scroll_.set_active(true);
             w.profile_.set_selected(2);
             check(w.fps_.get_value_as_int() == 90 && w.bitrate_.get_value_as_int() == 12000, "quality preset");
             w.source_.set_selected(1); w.monitors_.set_value(3); // Model still enforces single-window.
@@ -92,6 +96,13 @@ struct ControlUiTest {
             w.endpoints_.set_text("192.0.2.10:7878"); w.stack_.set_visible_child("pair"); ++step; break;
         case 2:
             check(snapshot("pairing"), "pairing screenshot");
+            w.on_event("{\"type\":\"pairing_request\",\"id\":\"" + std::string(32, 'c') + "\",\"code\":\"12345 67890\",\"peer\":\"192.0.2.20\",\"expires_seconds\":60}");
+            check(w.pair_request_box_.get_visible() && !w.pair_accept_.get_sensitive(), "approval requires explicit code comparison");
+            w.pair_compared_.set_active(true); check(w.pair_accept_.get_sensitive(), "comparison enables exact request approval");
+            w.on_event("{\"type\":\"pairing_closed\",\"id\":\"" + std::string(32, 'd') + "\",\"reason\":\"approved\"}");
+            check(!w.pairing_id_.empty(), "stale pairing event ignored");
+            w.on_event("{\"type\":\"pairing_closed\",\"id\":\"" + std::string(32, 'c') + "\",\"reason\":\"rejected\"}");
+            check(w.pairing_id_.empty() && !w.pair_request_box_.get_visible(), "pairing rejection clears controls");
             w.live_input_.set_active(false); ++step; break;
         case 3:
             if (w.input_active_[0]) break;
@@ -101,9 +112,9 @@ struct ControlUiTest {
             if (!w.input_active_[0]) break;
             w.on_event(R"({"state":"connected"})");
             check(w.status_badge_.get_text() == "Connected", "authenticated connected status");
-            w.stack_.set_visible_child("activity"); ++step; break;
+            w.stack_.set_visible_child("preferences"); ++step; break;
         case 5:
-            check(snapshot("activity"), "activity screenshot");
+            check(snapshot("settings"), "settings screenshot");
             check(w.close_requested(), "active close is intercepted"); ++step; break;
         case 6:
             if (!click_dialog("Keep sharing")) break;

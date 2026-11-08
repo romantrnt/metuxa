@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <cstdio>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -19,6 +20,110 @@ bool unhex(std::string_view s, std::uint8_t* out, std::size_t n) {
     auto digit = [](char c) { if (c >= '0' && c <= '9') return c - '0'; if (c >= 'a' && c <= 'f') return c - 'a' + 10; if (c >= 'A' && c <= 'F') return c - 'A' + 10; return -1; };
     for (std::size_t i=0; i<n; ++i) { int a=digit(s[i*2]), b=digit(s[i*2+1]); if (a<0 || b<0) return false; out[i]=static_cast<std::uint8_t>((a<<4)|b); }
     return true;
+}
+namespace {
+std::string pairing_hash(std::string_view domain, std::initializer_list<std::string_view> fields) {
+    std::vector<std::uint8_t> bytes(domain.begin(), domain.end());
+    bytes.push_back(0);
+    for (auto field : fields) {
+        const auto start = bytes.size();
+        bytes.resize(start + field.size() / 2);
+        if (field.size() % 2 || !unhex(field, bytes.data() + start, field.size() / 2)) return {};
+    }
+    std::array<std::uint8_t,32> digest{}; unsigned size=0;
+    const bool ok=EVP_Digest(bytes.data(),bytes.size(),digest.data(),&size,EVP_sha256(),nullptr)==1 && size==digest.size();
+    OPENSSL_cleanse(bytes.data(),bytes.size());
+    return ok ? hex(digest.data(),digest.size()) : std::string{};
+}
+}
+std::string pairing_commitment(std::string_view fingerprint, std::string_view client_nonce) {
+    if(fingerprint.size()!=64 || client_nonce.size()!=64) return {};
+    return pairing_hash("metuxa-pair1-client-commit", {fingerprint,client_nonce});
+}
+std::string pairing_comparison(std::string_view fingerprint, std::string_view client_nonce,
+                               std::string_view server_nonce, std::string_view request_id) {
+    if(fingerprint.size()!=64 || client_nonce.size()!=64 || server_nonce.size()!=64 || request_id.size()!=32) return {};
+    const auto value=pairing_hash("metuxa-pair1-compare", {fingerprint,client_nonce,server_nonce,request_id});
+    std::array<std::uint8_t,32> digest{};
+    if(!unhex(value,digest.data(),digest.size())) return {};
+    const std::uint32_t number=(std::uint32_t(digest[0])<<24)|(std::uint32_t(digest[1])<<16)|
+                               (std::uint32_t(digest[2])<<8)|digest[3];
+    char digits[11]; std::snprintf(digits,sizeof digits,"%010llu",static_cast<unsigned long long>(number));
+    return std::string(digits,5)+" "+std::string(digits+5,5);
+}
+bool PairingGate::window_event(bool open) {
+    return notify_(std::string("{\"type\":\"pairing_window\",\"state\":\"")+(open?"open":"closed")+
+                   "\",\"open\":"+(open?"true":"false")+",\"expires_seconds\":"+(open?"60":"0")+"}");
+}
+void PairingGate::finish_locked(std::string_view reason) {
+    if(!active_) return;
+    // Reasons are internal constants, never peer-supplied strings.
+    notify_("{\"type\":\"pairing_closed\",\"id\":\""+active_->id+"\",\"reason\":\""+std::string(reason)+"\"}");
+    active_.reset(); presented_=false; decision_=Decision::Missing;
+}
+void PairingGate::tick_locked() {
+    const auto now=Clock::now();
+    if(armed_ && now>=window_deadline_) { armed_=false; window_event(false); }
+    if(active_ && now>=active_->deadline) finish_locked("expired");
+}
+void PairingGate::tick() { std::lock_guard lock(mutex_); tick_locked(); }
+bool PairingGate::arm() {
+    std::lock_guard lock(mutex_); tick_locked();
+    const char* reason=active_?"busy":attempts_>=10?"limit":
+        (attempts_ && Clock::now()-last_attempt_<std::chrono::seconds(2))?"cooldown":nullptr;
+    if(reason) { notify_(std::string("{\"type\":\"pairing_unavailable\",\"reason\":\"")+reason+"\"}"); return false; }
+    window_deadline_=Clock::now()+std::chrono::seconds(60);
+    armed_=window_event(true); return armed_;
+}
+void PairingGate::close() {
+    std::lock_guard lock(mutex_);
+    if(armed_) { armed_=false; window_event(false); }
+    finish_locked("rejected");
+}
+std::optional<PairingGate::Ticket> PairingGate::reserve() {
+    std::lock_guard lock(mutex_); tick_locked();
+    if(!armed_ || active_ || attempts_>=10) return {};
+    std::array<std::uint8_t,48> random{};
+    if(RAND_bytes(random.data(),random.size())!=1) { armed_=false; window_event(false); return {}; }
+    armed_=false; ++attempts_; last_attempt_=Clock::now();
+    if(!window_event(false)) return {};
+    active_=Ticket{hex(random.data(),16),hex(random.data()+16,32),window_deadline_};
+    presented_=false; decision_=Decision::Waiting; return active_;
+}
+bool PairingGate::present(const std::string& id,const std::string& code,const std::string& peer) {
+    std::lock_guard lock(mutex_); tick_locked();
+    // Caller uses inet_ntop. Reject anything that could escape a status field.
+    if(!active_ || active_->id!=id || presented_ || code.size()!=11 || code[5]!=' ' ||
+       code.substr(0,5).find_first_not_of("0123456789")!=std::string::npos ||
+       code.substr(6).find_first_not_of("0123456789")!=std::string::npos || peer.empty() ||
+       peer.find_first_not_of("0123456789.")!=std::string::npos) return false;
+    auto remaining=std::chrono::duration_cast<std::chrono::milliseconds>(active_->deadline-Clock::now()).count();
+    presented_=notify_("{\"type\":\"pairing_request\",\"id\":\""+id+"\",\"code\":\""+code+
+                       "\",\"peer\":\""+peer+"\",\"expires_seconds\":"+std::to_string((remaining+999)/1000)+"}");
+    if(!presented_) finish_locked("invalid");
+    return presented_;
+}
+bool PairingGate::decide(std::string_view id,bool approve) {
+    std::lock_guard lock(mutex_); tick_locked();
+    if(!active_ || active_->id!=id || !presented_ || decision_!=Decision::Waiting) return false;
+    decision_=approve?Decision::Approved:Decision::Rejected; return true;
+}
+PairingGate::Decision PairingGate::decision(std::string_view id) {
+    std::lock_guard lock(mutex_); tick_locked();
+    return active_ && active_->id==id ? decision_ : Decision::Missing;
+}
+bool PairingGate::issue(std::string_view id,const std::function<bool()>& send) {
+    std::lock_guard lock(mutex_); tick_locked();
+    if(!active_ || active_->id!=id || !presented_ || decision_!=Decision::Approved) return false;
+    // No close, deadline transition or second decision can occur between the
+    // final check and token issuance. A prior close/expiry always wins.
+    bool sent=false;
+    try { sent=send(); } catch(...) { finish_locked("disconnected"); throw; }
+    finish_locked(sent?"approved":"disconnected"); return sent;
+}
+void PairingGate::finish(std::string_view id,std::string_view reason) {
+    std::lock_guard lock(mutex_);
+    if(active_ && active_->id==id) finish_locked(reason);
 }
 ServerCredentials::~ServerCredentials() {
     if (!code_.empty()) OPENSSL_cleanse(code_.data(), code_.size());

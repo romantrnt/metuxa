@@ -5,8 +5,6 @@ import android.media.AudioFormat;
 import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
-import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -25,7 +23,8 @@ public final class AudioDecoder {
     private static final String TAG = "AudioDecoder";
 
     private MediaCodec codec;
-    private HandlerThread cbThread;
+    private final CodecLifecycle lifecycle = new CodecLifecycle("AudioDecoderCb");
+    private volatile boolean initialized;
     private AudioTrack track;
     private final ConcurrentLinkedQueue<Integer> freeInputs = new ConcurrentLinkedQueue<>();
     private volatile boolean released = false;
@@ -38,46 +37,49 @@ public final class AudioDecoder {
                 MediaFormat.MIMETYPE_AUDIO_OPUS, sampleRate, channels);
         fmt.setByteBuffer("csd-0", ByteBuffer.wrap(opusHead(channels, sampleRate)));
 
-        codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS);
-        cbThread = new HandlerThread("AudioDecoderCb");
-        cbThread.start();
-        codec.setCallback(callback, new Handler(cbThread.getLooper()));
-        codec.configure(fmt, null, null, 0);
-        codec.start();
+        lifecycle.initialize(() -> {
+            codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS);
+            codec.setCallback(callback, lifecycle.handler());
+            codec.configure(fmt, null, null, 0);
 
-        int channelMask = (channels >= 2)
-                ? AudioFormat.CHANNEL_OUT_STEREO
-                : AudioFormat.CHANNEL_OUT_MONO;
-        int minBuf = AudioTrack.getMinBufferSize(sampleRate, channelMask,
-                AudioFormat.ENCODING_PCM_16BIT);
-        int bufSize = Math.max(minBuf, sampleRate * channels * 2 / 50);
-        track = new AudioTrack.Builder()
-                .setAudioAttributes(new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build())
-                .setAudioFormat(new AudioFormat.Builder()
-                        .setSampleRate(sampleRate)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(channelMask)
-                        .build())
-                .setBufferSizeInBytes(bufSize)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-                .build();
-        track.play();
+            int channelMask = (channels >= 2)
+                    ? AudioFormat.CHANNEL_OUT_STEREO
+                    : AudioFormat.CHANNEL_OUT_MONO;
+            int minBuf = AudioTrack.getMinBufferSize(sampleRate, channelMask,
+                    AudioFormat.ENCODING_PCM_16BIT);
+            int bufSize = Math.max(minBuf, sampleRate * channels * 2 / 50);
+            track = new AudioTrack.Builder()
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build())
+                    .setAudioFormat(new AudioFormat.Builder()
+                            .setSampleRate(sampleRate)
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setChannelMask(channelMask)
+                            .build())
+                    .setBufferSizeInBytes(bufSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                    .build();
+            track.play();
+            codec.start();
+            initialized = true;
+        });
         Log.i(TAG, "opened opus " + sampleRate + "Hz " + channels + "ch");
     }
 
     private final MediaCodec.Callback callback = new MediaCodec.Callback() {
         @Override
         public void onInputBufferAvailable(MediaCodec c, int index) {
+            if (released || lifecycle.isClosed() || c != codec) return;
             freeInputs.add(index);
         }
 
         @Override
         public void onOutputBufferAvailable(MediaCodec c, int index,
                                             MediaCodec.BufferInfo info) {
+            if (released || lifecycle.isClosed() || c != codec) return;
             if (info.size > 0) {
                 try {
                     ByteBuffer out = c.getOutputBuffer(index);
@@ -108,55 +110,52 @@ public final class AudioDecoder {
 
         @Override
         public void onOutputFormatChanged(MediaCodec c, MediaFormat format) {
+            if (released || lifecycle.isClosed() || c != codec) return;
             Log.i(TAG, "output format: " + format);
         }
 
         @Override
         public void onError(MediaCodec c, MediaCodec.CodecException e) {
+            if (released || lifecycle.isClosed() || c != codec) return;
             Log.e(TAG, "codec error: " + e.getErrorCode() + " " + e.getMessage());
         }
     };
 
     public void feed(byte[] data, int offset, int length, long ptsUsec) {
-        if (released || codec == null) return;
+        if (released || lifecycle.isClosed() || !initialized) return;
         Integer idx = freeInputs.poll();
         if (idx == null) return;
-        try {
-            ByteBuffer buf = codec.getInputBuffer(idx);
-            buf.clear();
-            buf.put(data, offset, length);
-            codec.queueInputBuffer(idx, 0, length, ptsUsec, 0);
-        } catch (Exception e) {
-            Log.w(TAG, "feed failed: " + e.getMessage());
-        }
+        // Only one queued operation per available codec buffer, so this remains
+        // bounded without moving codec operations back onto the RTP thread.
+        byte[] packet = java.util.Arrays.copyOfRange(data, offset, offset + length);
+        lifecycle.post(() -> {
+            try {
+                ByteBuffer buf = codec.getInputBuffer(idx);
+                buf.clear();
+                buf.put(packet);
+                codec.queueInputBuffer(idx, 0, packet.length, ptsUsec, 0);
+            } catch (Exception e) {
+                Log.w(TAG, "feed failed: " + e.getMessage());
+            }
+        });
     }
 
     public void release() {
         released = true;
-        freeInputs.clear();
-        if (track != null) {
-            try {
-                track.stop();
-            } catch (Exception ignored) {
+        initialized = false;
+        lifecycle.close(() -> {
+            freeInputs.clear();
+            if (track != null) {
+                try { track.stop(); } catch (Exception ignored) { }
+                try { track.release(); } catch (Exception ignored) { }
+                track = null;
             }
-            track.release();
-            track = null;
-        }
-        if (codec != null) {
-            try {
-                codec.stop();
-            } catch (Exception ignored) {
+            if (codec != null) {
+                try { codec.stop(); } catch (Exception ignored) { }
+                try { codec.release(); } catch (Exception ignored) { }
+                codec = null;
             }
-            try {
-                codec.release();
-            } catch (Exception ignored) {
-            }
-            codec = null;
-        }
-        if (cbThread != null) {
-            cbThread.quitSafely();
-            cbThread = null;
-        }
+        });
     }
 
     /** 19-byte OpusHead identification header (channel mapping family 0). */

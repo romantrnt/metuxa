@@ -9,8 +9,8 @@
 <p align="center">
   <img src="data/branding/metuxa-tux.png" alt="抱着蓝色 Meta 无限符号的 Tux" width="30%">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/branding/metuxa-wordmark-dark.svg">
-    <img src="docs/branding/metuxa-wordmark-light.svg" alt="metuxa" width="45%">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/metuxa-wordmark-dark.svg">
+    <img src="docs/assets/metuxa-wordmark-light.svg" alt="metuxa" width="45%">
   </picture>
 </p>
 
@@ -68,12 +68,20 @@ metuxa 将 Linux 桌面带入 Horizon Home 中可调整大小的普通窗口。P
 1. 在 Linux 上打开 **metuxa**。建议先选择一个屏幕和 **Balanced** 画质预设。选择是否共享系统音频；需要远程控制时，请在启动前启用 **Allow remote control**。
 2. 点击 **Start server**，在桌面权限对话框中选择共享内容。只有获得桌面授权后才能使用远程输入。取消对话框会取消本次启动。
 3. 在 Quest 上打开对应版本的 metuxa APK。通过发现功能选择 PC，或输入地址与基础端口，通常为 **7878**。
-4. 在 PC 上打开 **Pair headset**。核对完整的 **SHA-256 fingerprint**，在 Quest 上输入指纹和 **pairing code** 后连接。被发现的设备并不等于已验证的设备。
+4. 在 PC 上打开 **Pair headset**，点击 **Pair a headset**，然后在 Quest 上连接。核对两端显示的全部十位数字，仅在完全一致时分别确认。拒绝意外请求。配对窗口在一次尝试后或一分钟后关闭。旧客户端仍可通过 **Manual pairing** 输入完整指纹和密钥。
 5. 按需调整面板的输入开关。**Disconnect all** 结束头显连接，**Stop server** 停止共享。重新启动服务器会更换指纹和配对码，需要更新已保存的配对信息。
 
 请妥善保管配对码。服务器运行期间，持有该次运行配对信息的人可能连接。请勿将 metuxa 暴露到公网，也不要设置路由器端口转发。
 
 默认端口：设备发现使用 **UDP 7877**，面板 1–3 的 TLS 控制使用 **TCP 7878–7880**，加密媒体使用协商出的 UDP 端口。协议版本 5 有意不兼容旧版 MetaShare 客户端。
+
+## 设置和更新
+
+PC 和 Quest 都有 **Settings**。Quest 的顶部与底部控制栏可分别设为始终显示、悬停显示或延时隐藏。**Controls** 按钮始终可用，方便通过手部或控制器固定显示控制栏。每台 PC 的每个显示器分别保存旋转角度，指针坐标随画面方向调整。设置中还可选择主题、文字大小和连接选项。
+
+更新由 GitHub 托管，并使用发布密钥签名。可手动检查、接收提示或自动下载，安装仍需明确操作。Android 保留系统安装确认，Linux 保留旧 AppImage。0.2.0 没有更新器，因此首次升级到 0.3.0 需要手动覆盖安装。请勿为升级而卸载正式签名的 APK。
+
+应用 ID 仍为 `dev.metuxa.quest`，显示名称根据版本生成，例如 **metuxa v0.3.0**。Horizon 的某些库页面可能仍选择显示包名，应用标签不能强制改变这些页面。详见 [更新说明](docs/UPDATES.md)。
 
 ## 可预期的输入行为
 
@@ -85,7 +93,7 @@ Horizon OS 可能将手部和控制器射线表示为无法区分的 Android 事
 
 ## 从源码构建
 
-Linux 依赖：C++20 编译器、Meson/Ninja、pkg-config、OpenSSL、FFmpeg codec/util/swscale/swresample、PipeWire、**sdbus-c++ 1.5**、**gtkmm 4.10+ / GTK4** 和 json-glib 开发文件。
+Linux 依赖：C++20 编译器、Meson/Ninja、pkg-config、OpenSSL、libcurl、FFmpeg codec/util/swscale/swresample、PipeWire、**sdbus-c++ 1.5**、**gtkmm 4.10+ / GTK4** 和 json-glib 开发文件。
 
 ```sh
 meson setup build -Dportal=enabled -Dmutter=disabled -Dbuildtype=debugoptimized

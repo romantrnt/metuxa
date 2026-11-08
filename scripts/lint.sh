@@ -1,14 +1,8 @@
 #!/usr/bin/env bash
-# C++ lint for MetaShare: clang-format (style) + clang-tidy (static analysis).
-#
-# Run inside the dev shell so clang-tools and the build dependencies are on
-# PATH:
-#     nix develop --command scripts/lint.sh          # check (CI mode)
-#     nix develop --command scripts/lint.sh --fix     # reformat in place
-#
-# clang-format covers every C++ source (including the Quest client's native
-# code). clang-tidy only covers the meson-built sources, since it needs the
-# compile_commands.json database; the Quest cpp is built by Gradle/NDK.
+# C++ formatting and static analysis. Requires clang-format, clang-tidy and
+# the native dependencies documented in docs/BUILD.md.
+#   scripts/lint.sh          # check
+#   scripts/lint.sh --fix    # reformat, then check
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -16,14 +10,12 @@ cd "$(dirname "$0")/.."
 fix=0
 [[ "${1:-}" == "--fix" ]] && fix=1
 
-# All hand-written C++ sources. Build outputs and the vendored Android SDK are
-# excluded by only listing source directories. The desktop_test client is
-# omitted — it is dormant pending a raw-RTP rewrite and still references the
-# removed libdatachannel/SDP signaling, so it is neither built nor linted.
+# Active native sources and tests only. The dormant legacy desktop_test client
+# is not part of the current protocol or build.
 mapfile -t cpp_files < <(find \
     src \
     client/gtk \
-    client/quest/app/src/main/cpp \
+    tests \
     -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) | sort)
 
 # --- clang-format ----------------------------------------------------------

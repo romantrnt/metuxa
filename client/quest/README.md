@@ -12,11 +12,14 @@ The separate package `dev.metuxa.quest` can coexist with the original
    permissions there. Host capture permission is still controlled by the host.
 2. Open **metuxa** in Quest. Choose **Find nearby PCs**, a saved PC, or enter a
    hostname/IP address and the base port (normally **7878**).
-3. Compare and enter the server's **full SHA-256 fingerprint** and **32-character
-   pairing token**. Discovery results are unauthenticated hints, not verified
-   identities. A new server run uses new pairing details.
-4. Choose **Connect**. No connection happens merely because a PC is discovered.
-   Automatic connection is opt-in and is tied to one specific saved PC.
+3. On the PC, choose **Pair a headset**. On Quest, leave manual credentials
+   empty and choose **Connect**. Compare all ten digits and confirm on both
+   screens only if they match. Each pairing window lasts one minute and admits
+   one request. See [Pairing](../../docs/PAIRING.md) for limits and manual pairing
+   with the full SHA-256 fingerprint and 32-character token.
+4. Discovery never establishes trust or connects by itself. Automatic connection
+   is opt-in and tied to one explicitly saved PC. Restarting the server changes
+   its pairing details, so the new identity must be paired again.
 5. Use **Settings** to return to the launcher, or **Disconnect all** to stop all
    metuxa panels and release remote input. The toolbar remains reachable even
    when remote pointer input is blocked.
@@ -123,7 +126,7 @@ runtime, but cannot establish a reliable hand/controller distinction on its own.
 - Control: pinned TLS on **7878 + monitor index**, pairing authentication before
   the stream description. No cleartext or legacy-v4 fallback.
 - Media: H.265/H.264 video and Opus audio transported as authenticated encrypted
-  UDP packets. Android framework `MediaCodec`, `AudioTrack`, and `SurfaceView`
+  UDP packets. Android framework `MediaCodec`, `AudioTrack`, and `TextureView`
   decode and render without an OpenXR or third-party media dependency.
 - The source-derived decoder keeps dependency-preserving queues and keyframe
   recovery rather than blocking the RTP receiver on decoder availability.
@@ -157,7 +160,10 @@ runtime:
 JAVA_HOME=/path/to/jdk17 bash tests/run-core-tests.sh
 ```
 
-See `VALIDATION.md` for the verified checks and remaining on-device test scope.
+See the [verification record](../../docs/VERIFICATION.md) for current results
+and the [acceptance checklist](../../docs/MANUAL-TESTS.md) for physical-device
+checks. [Android View tests](tests/ui/README.md) cover layout and interaction
+without a headset.
 No build command above installs the APK, launches an app, captures a desktop,
 or injects input into the user's session. Installation and end-to-end testing
 must be performed separately by the user.

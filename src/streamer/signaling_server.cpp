@@ -96,6 +96,64 @@ bool Server::read_line(int fd,std::string& line,std::string& pending,int timeout
     }
     return false;
 }
+bool Server::pairing_peer_alive(int fd) {
+    pollfd p{fd,POLLIN,0};
+    if(::poll(&p,1,0)<0) return errno==EINTR;
+    if(p.revents&(POLLHUP|POLLERR|POLLNVAL)) return false;
+    std::lock_guard lock(send_mu_);
+    if(!tls_) return false;
+    if(!(p.revents&POLLIN) && SSL_pending(tls_)==0) return true;
+    // Consume TLS post-handshake records if present. Application bytes after
+    // REVEAL are forbidden, including AUTH/READY/INPUT and extra reveals.
+    char byte; const int n=SSL_read(tls_,&byte,1);
+    if(n>0) return false;
+    const int error=SSL_get_error(tls_,n);
+    return error==SSL_ERROR_WANT_READ || error==SSL_ERROR_WANT_WRITE;
+}
+void Server::pairing_loop(int fd,const sockaddr_in& peer,std::string_view commitment,std::string& pending) {
+    auto gate=credentials_->pairing_gate();
+    auto send_pair=[&](const std::string& value) { std::lock_guard lock(send_mu_); return write_line_locked(value+'\n'); };
+    std::array<std::uint8_t,32> committed{};
+    if(!gate || SSL_version(tls_)!=TLS1_3_VERSION || !pending.empty() || !security::unhex(commitment,committed.data(),committed.size())) {
+        send_pair("ERROR PAIRING"); return;
+    }
+    const auto ticket=gate->reserve();
+    if(!ticket) { send_pair("ERROR PAIRING_CLOSED"); return; }
+    auto finish=[&](std::string_view reason) { gate->finish(ticket->id,reason); };
+    if(!send_pair("PAIR_CHALLENGE1 "+ticket->id+" "+ticket->nonce)) { finish("disconnected"); return; }
+    std::string reveal;
+    const auto left=std::chrono::duration_cast<std::chrono::milliseconds>(ticket->deadline-Clock::now()).count();
+    if(left<=0 || !read_line(fd,reveal,pending,static_cast<int>(std::min<std::int64_t>(5000,left)))) {
+        finish("disconnected"); return;
+    }
+    std::array<std::uint8_t,32> actual{};
+    const bool valid=reveal.size()==77 && reveal.compare(0,13,"PAIR_REVEAL1 ")==0 && pending.empty() &&
+        security::unhex(security::pairing_commitment(credentials_->fingerprint(),std::string_view(reveal).substr(13)),actual.data(),actual.size()) &&
+        CRYPTO_memcmp(actual.data(),committed.data(),actual.size())==0;
+    if(!valid) { send_pair("ERROR PAIRING"); finish("invalid"); return; }
+    const auto code=security::pairing_comparison(credentials_->fingerprint(),std::string_view(reveal).substr(13),ticket->nonce,ticket->id);
+    OPENSSL_cleanse(reveal.data(),reveal.size()); reveal.clear();
+    char address[INET_ADDRSTRLEN]{};
+    if(!::inet_ntop(AF_INET,&peer.sin_addr,address,sizeof address) || code.empty() ||
+       !send_pair("PAIR_WAIT1") || !gate->present(ticket->id,code,address)) { finish("invalid"); return; }
+    while(running_) {
+        if(!pairing_peer_alive(fd)) { finish("disconnected"); return; }
+        const auto decision=gate->decision(ticket->id);
+        if(decision==security::PairingGate::Decision::Approved) {
+            // No media callback is run on this connection. Reconnect using the
+            // approved certificate pin and token through the regular AUTH path.
+            gate->issue(ticket->id,[&] {
+                return running_ && pairing_peer_alive(fd) && send_pair("PAIRED1 "+credentials_->pairing_code());
+            });
+            return;
+        }
+        if(decision!=security::PairingGate::Decision::Waiting) {
+            send_pair("ERROR PAIRING"); finish(decision==security::PairingGate::Decision::Rejected?"rejected":"expired"); return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    finish("disconnected");
+}
 void Server::client_loop(int fd,const sockaddr_in& peer,const OnConnect& on_connect,const OnMessage& on_message) {
     {
         std::lock_guard lk(send_mu_); client_fd_=fd;
@@ -120,6 +178,10 @@ void Server::client_loop(int fd,const sockaddr_in& peer,const OnConnect& on_conn
     std::string line,pending;
     if (!handshake) { cleanup(); return; }
     const bool auth_line = read_line(fd,line,pending,5000);
+    if(auth_line && line.size()==70 && line.compare(0,6,"PAIR1 ")==0) {
+        pairing_loop(fd,peer,std::string_view(line).substr(6),pending);
+        OPENSSL_cleanse(line.data(),line.size()); cleanup(); return;
+    }
     const bool accepted = auth_line && line.size()==37 && line.compare(0,5,"AUTH ")==0 && credentials_->authenticate(std::string_view(line).substr(5));
     OPENSSL_cleanse(line.data(),line.size()); line.clear();
     if (!accepted) {

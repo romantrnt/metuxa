@@ -4,7 +4,6 @@ import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Surface;
@@ -81,7 +80,8 @@ public final class VideoDecoder {
     private volatile long latestQueuedPtsUsec = Long.MIN_VALUE;
 
     private MediaCodec codec;
-    private HandlerThread callbackThread;
+    private final CodecLifecycle lifecycle = new CodecLifecycle("VideoDecoderCb");
+    private volatile boolean initialized;
     private final ConcurrentLinkedQueue<Integer> freeInputs = new ConcurrentLinkedQueue<>();
     private volatile boolean firstFrameDone = false;
     private volatile boolean released = false;
@@ -149,14 +149,14 @@ public final class VideoDecoder {
                 ? MediaFormat.MIMETYPE_VIDEO_HEVC
                 : MediaFormat.MIMETYPE_VIDEO_AVC;
 
-        callbackThread = new HandlerThread("VideoDecoderCb");
-        callbackThread.start();
-        cbHandler = new Handler(callbackThread.getLooper());
-
-        codec = MediaCodec.createDecoderByType(mime);
-        codec.setCallback(callback, cbHandler);
-        codec.configure(buildFormat(), surface, null, 0);
-        codec.start();
+        lifecycle.initialize(() -> {
+            cbHandler = lifecycle.handler();
+            codec = MediaCodec.createDecoderByType(mime);
+            codec.setCallback(callback, cbHandler);
+            codec.configure(buildFormat(), this.surface, null, 0);
+            codec.start();
+            initialized = true;
+        });
         Log.i(TAG, "opened " + mime + " " + width + "x" + height);
     }
 
@@ -182,7 +182,7 @@ public final class VideoDecoder {
      * callback thread so it is serialized with the codec's other callbacks.
      */
     private void recover() {
-        if (released || codec == null) return;
+        if (released || lifecycle.isClosed() || codec == null) return;
         // If the output surface is gone (window closed/recreated), there is
         // nothing to render to — reconfiguring would just fail. Leave the gate
         // armed and let the Activity's surface-recreation path re-init us.
@@ -228,7 +228,7 @@ public final class VideoDecoder {
     private final MediaCodec.Callback callback = new MediaCodec.Callback() {
         @Override
         public void onInputBufferAvailable(MediaCodec c, int index) {
-            if (released || recovering) return;
+            if (released || lifecycle.isClosed() || recovering || c != codec) return;
             freeInputs.add(index);
             drainPendingInputs();
         }
@@ -236,6 +236,7 @@ public final class VideoDecoder {
         @Override
         public void onOutputBufferAvailable(MediaCodec c, int index,
                                             MediaCodec.BufferInfo info) {
+            if (released || lifecycle.isClosed() || recovering || c != codec) return;
             try {
                 // Always schedule with an explicit, monotonically forward render
                 // time (never the 2-arg "render now" path): mixing immediate and
@@ -249,8 +250,9 @@ public final class VideoDecoder {
                 long renderNs = scheduleRender(info.presentationTimeUs);
                 c.releaseOutputBuffer(index, renderNs);
             } catch (Exception ignored) {
+                return;
             }
-            if (!firstFrameDone) {
+            if (!released && !lifecycle.isClosed() && !firstFrameDone) {
                 firstFrameDone = true;
                 if (listener != null) listener.onFirstFrameRendered();
             }
@@ -258,6 +260,7 @@ public final class VideoDecoder {
 
         @Override
         public void onOutputFormatChanged(MediaCodec c, MediaFormat format) {
+            if (released || lifecycle.isClosed() || recovering || c != codec) return;
             try {
                 int w = format.getInteger(MediaFormat.KEY_WIDTH);
                 int h = format.getInteger(MediaFormat.KEY_HEIGHT);
@@ -276,6 +279,7 @@ public final class VideoDecoder {
 
         @Override
         public void onError(MediaCodec c, MediaCodec.CodecException e) {
+            if (released || lifecycle.isClosed() || c != codec) return;
             // Re-arm the gate: whatever comes next, don't feed inter frames until
             // a keyframe re-establishes decodable state.
             synchronized (inputLock) { clearPendingInputs(); }
@@ -284,7 +288,7 @@ public final class VideoDecoder {
                     + " transient=" + e.isTransient());
             // Rebuild the codec so it doesn't stay wedged forever. Serialized on
             // this (callback) thread via post to avoid reentrancy with the codec.
-            if (released || recovering) return;
+            if (released || lifecycle.isClosed() || recovering || c != codec) return;
             recovering = true;
             cbHandler.post(VideoDecoder.this::recover);
         }
@@ -335,8 +339,9 @@ public final class VideoDecoder {
 
     /** Hand off a bounded, dependency-preserving queue without waiting on RTP. */
     public void feed(byte[] annexB, long ptsUsec, boolean keyframe) {
-        if (released || recovering || codec == null) return;
+        if (released || lifecycle.isClosed() || recovering || !initialized) return;
         synchronized (inputLock) {
+            if (released || lifecycle.isClosed() || recovering) return;
             PendingFrame oldest = pendingInputs.peekFirst();
             if (pendingInputs.size() >= MAX_PENDING_FRAMES ||
                     pendingBytes + annexB.length > MAX_PENDING_BYTES ||
@@ -374,7 +379,7 @@ public final class VideoDecoder {
         }
         // Post feedback too: feed() never waits for codec buffers or socket I/O.
         cbHandler.post(() -> {
-            if (!released && keyframeRequester != null) keyframeRequester.request();
+            if (!released && !lifecycle.isClosed() && keyframeRequester != null) keyframeRequester.request();
         });
     }
 
@@ -441,10 +446,10 @@ public final class VideoDecoder {
     public void setSurface(Surface s) {
         if (released || s == null || !s.isValid()) return;
         this.surface = s;
-        Handler h = cbHandler;
-        if (h == null || codec == null) return;
-        h.post(() -> {
-            if (released || codec == null) return;
+        // Synchronizes with handler setup, including a swap requested while
+        // initialize is still configuring the codec on its owner thread.
+        lifecycle.post(() -> {
+            if (released || lifecycle.isClosed() || codec == null) return;
             Surface cur = surface;
             if (cur == null || !cur.isValid()) return;
             if (!recovering) {
@@ -479,25 +484,18 @@ public final class VideoDecoder {
 
     public void release() {
         released = true;
-        synchronized (inputLock) {
-            clearPendingInputs();
-            if (cbHandler != null) cbHandler.removeCallbacks(drainInputsTask);
-        }
-        freeInputs.clear();
-        if (codec != null) {
-            try {
-                codec.stop();
-            } catch (Exception ignored) {
+        initialized = false;
+        synchronized (inputLock) { clearPendingInputs(); }
+        lifecycle.close(() -> {
+            keyframeRequester = null;
+            freeInputs.clear();
+            if (codec != null) {
+                try { codec.stop(); } catch (Exception ignored) { }
+                try { codec.release(); } catch (Exception ignored) { }
+                codec = null;
             }
-            try {
-                codec.release();
-            } catch (Exception ignored) {
-            }
-            codec = null;
-        }
-        if (callbackThread != null) {
-            callbackThread.quitSafely();
-            callbackThread = null;
-        }
+            listener = null;
+            surface = null;
+        });
     }
 }

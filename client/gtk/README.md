@@ -14,9 +14,10 @@ must not replace `dev.metashare.StreamerUI` or the original MetaShare binaries.
 3. Start the server and approve the system capture dialog when applicable.
    Starting, requesting permission, listening, connected, and error are distinct
    states reported by the server, not inferred from process existence.
-4. In **Pair headset**, compare the full SHA-256 fingerprint and enter the private
-   pairing code in the Quest launcher. Each new server session has new credentials.
-   The UI cannot enable an unprotected fallback. Do not expose the ports publicly.
+4. In **Pair headset**, choose **Pair a headset**. Connect from Quest, compare
+   all ten digits and confirm on both screens. Manual fingerprint/token pairing
+   remains available. Each server run has new credentials. See the
+   [pairing protocol](../../docs/PAIRING.md); do not expose the ports publicly.
 5. During an input-enabled session, use the live remote-control switch to block
    or re-enable input without restarting video. This never grants new portal
    permissions. Stop, or choose **Stop and close** when closing an active session.
@@ -29,7 +30,7 @@ Real headset and compositor behavior still requires device testing.
 
 ## Configuration and privacy
 
-- Preferences are atomically saved in `$XDG_CONFIG_HOME/metuxa/control.ini`
+- Capture preferences are atomically saved in `$XDG_CONFIG_HOME/metuxa/control.ini`
   (normally `~/.config/metuxa/control.ini`) with private creation permissions.
 - No microphone setting exists. Neither credentials nor input consent are saved.
 - Pairing credentials arrive through dedicated FD 3, never command arguments or
@@ -45,6 +46,10 @@ Real headset and compositor behavior still requires device testing.
 - Parent death uses Linux `PR_SET_PDEATHSIG` with SIGKILL, including a fork/exec
   race check, so a GUI crash cannot leave its capture process alive. Normal close
   first asks whether to stop sharing and waits for exit.
+
+Appearance and update preferences are available in **Settings**. Update checks
+and downloads are opt-in; installation is explicit and requires sharing to stop.
+See [Updates](../../docs/UPDATES.md) for signatures and AppImage replacement.
 
 ## Server status contract
 

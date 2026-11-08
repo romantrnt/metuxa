@@ -14,8 +14,8 @@ The GTK control application, AppImage launcher/runtime and independent libraries
 
 The release contains both source archives below, beside the AppImage, without a source-request fee:
 
-- `metuxa-0.2.0-source.tar.gz`: the exact published metuxa source revision, including the build and packaging scripts.
-- `metuxa-0.2.0-dependency-sources.tar.gz`: the actual bundled dependency source archives, exact Ubuntu source-package versions and Debian/Ubuntu patches, the pinned Alpine package recipes/patches for static runtime libraries, and build records. Keep both archives available with any binary redistribution.
+- `metuxa-0.3.0-source.tar.gz`: the exact published metuxa source revision, including the build and packaging scripts.
+- `metuxa-0.3.0-dependency-sources.tar.gz`: the actual bundled dependency source archives, exact Ubuntu source-package versions and Debian/Ubuntu patches, the pinned Alpine package recipes/patches for static runtime libraries, and build records. Keep both archives available with any binary redistribution.
 
 This is direct corresponding-source distribution, not a substitute promise to supply source later. A repository link alone is not the dependency source bundle. A release must not publish the AppImage without both source assets and their checksums. GPL terms permit modification and redistribution; applicable LGPL terms also permit modification/relinking and reverse engineering for debugging such modifications.
 
@@ -27,7 +27,7 @@ The AppImage contains:
 - x264 at `b35605ace3ddf7c1a5d67a2eb553f034aef41d55`, GPL-2.0-or-later; distributed as part of the GPLv3 combined server.
 - sdbus-c++ 1.5.0 at `30d9f1d46258c2be4ce29b7f7f168ecdf6d4f328`, LGPL-2.1-or-later with its included header exception.
 - NVIDIA codec interface headers at `157becbf51c8b813425572b75c06c370bd43d8fd`, MIT. These are build inputs, not an NVIDIA driver distribution.
-- GTK/gtkmm, GLib/glibmm, PipeWire, Opus, OpenSSL, font/rendering and other supporting libraries from the Ubuntu 24.04 package closure. Individual copyrights and licenses are in `usr/share/licenses/ubuntu/`; referenced common license texts are in `usr/share/common-licenses/`.
+- GTK/gtkmm, GLib/glibmm, PipeWire, Opus, OpenSSL, libcurl, font/rendering and other supporting libraries from the Ubuntu 24.04 package closure. Individual copyrights and licenses are in `usr/share/licenses/ubuntu/`; referenced common license texts are in `usr/share/common-licenses/`.
 - Fontconfig 2.15.0 from exact Ubuntu source `2.15.0-1.1ubuntu2`, rebuilt with the documented `fontconfig-template-dir.patch`. The patch makes passive template discovery relocatable, avoiding incompatible newer-host configuration. It changes no system files.
 - An AppImage type-2 runtime rebuilt locally from official commit `fedfad51acc2860b2916a1eef32ba4a500ff31ef`. It is not the upstream signed binary. Runtime code is MIT; statically linked libfuse 3.15.0 is LGPL-2.1, squashfuse 0.5.2 is BSD-2-Clause, musl 1.2.5 is MIT, mimalloc 2.1.7 is MIT, zstd 1.5.6 is distributed under BSD-3-Clause, and zlib 1.4 uses the zlib license. Exact Alpine package revisions, patches, original sources and rebuild scripts are supplied. FUSE's helper/service/device installation is disabled during the container build.
 

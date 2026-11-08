@@ -1,45 +1,56 @@
 # Live acceptance checklist
 
-Run these only when ready to stop the old stream. Keep the original desktop folder and installed MetaShare unchanged. Automated tests use synthetic media/isolated sessions and cannot replace this checklist.
+Use a test desktop and headset you are ready to interrupt. Keep the previous release available for rollback. Record PASS, FAIL or NOT TESTED with the OS/headset versions. [Automated results](VERIFICATION.md) cover isolated sessions and synthetic media; they do not replace these checks.
 
-## Start and pair
+## Launch and pair
 
-- Start from the test bundle. Confirm settings persist but a session does not start merely by opening the UI.
-- Cancel the portal picker, deny control, close the dialog, and retry. Status must be honest, the button must not create duplicate servers, and Stop must close a pending capture request.
-- Pair with the exact PC fingerprint and code. Wrong code, wrong fingerprint, legacy MetaShare and an unrelated LAN server must not receive desktop video or control.
-- Stop/Start. Old pairing details must fail, and the new pair must work.
+- Opening either app must not start sharing. Discovery suggests PCs without connecting. Invalid address, port, fingerprint or token must show a useful error.
+- Cancel the portal picker, deny control, close the dialog, and retry. Status must match the result; repeated Start must not create duplicate servers. Stop must close a pending capture request.
+- Open **Pair a headset** on the PC. Compare all ten digits and confirm on both screens. Repeat with mismatched digits, unexpected requests, Cancel on either side, expiry and server restart. Cancelled or unconfirmed attempts must not stream or forward input.
+- Cancel an attempt and immediately begin another. An old dialog must not approve or cancel the new request. Closing the Quest launcher cancels its pending attempt.
+- Test manual pairing with the exact fingerprint and token. Wrong credentials, legacy MetaShare and unrelated LAN servers must not receive desktop video or control. Stop/Start changes the server identity; saved credentials must fail until deliberately replaced.
+- Enable auto-connect for one saved PC and restart Quest. Only that endpoint may be selected. Forget it and confirm automatic connection stops.
 
 ## Desktop and media
 
-- One 1920×1080 display at 72fps; compare H.265 hardware and H.264 software. Confirm displayed encoder and readable small text.
-- Off/System audio; one, two and three panels. Audio must play once from the primary panel. No microphone capture.
-- Confirm second/third panels connect to the selected PC, never a different discovery offer. Close/reopen them twenty times.
-- Try the view-only single-window portal mode. Check that the OS offers an actual window and does not silently show a whole monitor; availability depends on portal implementation.
-- Run 30–60 minutes beside Noda. Measure subjective stability/comfort and, if needed, film an external latency comparison rather than infer latency from fps.
+- Share one 1920×1080 display at 72 fps. Compare H.265 hardware and H.264 software encoding; check the reported encoder and readable small text.
+- Try audio Off/System with one, two and three panels. Audio must play once, through the primary panel only. No microphone capture.
+- Secondary panels must use the selected PC, never another discovery offer. Close/reopen them twenty times. Closing the primary disconnects the others.
+- Try view-only single-window capture. The portal must offer an actual application window, not silently share a whole monitor; availability depends on the portal.
+- Run for 30 to 60 minutes, including alongside Noda if used. Record stability and comfort. Measure latency separately rather than inferring it from frame rate.
 
 ## Input
 
-- Remote control off; keyboard/pointer must not reach Linux.
-- Enable control before Start, accept portal permission, test a mouse click/drag/scroll, Ctrl/Alt, Unicode/Russian text, Backspace and Enter.
-- During a drag or held modifier: block pointer, disable remote input on PC, disconnect Wi-Fi, pause Quest, lose window focus, and stop the app. No remote key/button should remain held.
-- Open all panels, set Block pointer once, and confirm hands/controller rays/Quest mouse do not forward pointer actions in any panel. Home hand tracking and a physical laptop mouse remain usable.
-- Test each independent action switch: movement/hover, clicks/drag, scroll, hardware/IME keyboard. With movement off and clicks on, the PC cursor must not move and clicks must target its existing location. With clicks off, moving over a panel must not synthesize a drag.
-- Disable scroll with a partially accumulated wheel step; it must not leak into later input. Disable keyboard during a paste/held modifier; pending text must stop and held keys release.
-- Compare Full remote, Keyboard only, View only and Custom preset labels with the actual switches; reopen the launcher and new panels to verify persistence.
-- In pointer-device filters, allow only selected physical descriptors or all identifiable physical descriptors except selected. Unknown and virtual devices must fail closed. Full unfiltered mode is separate.
-- Drag with an allowed mouse while a blocked hand/controller hovers, clicks or scrolls: the blocked source must not move, release or re-press the mouse drag. Unplug the mouse during a drag and confirm its buttons release.
-- Reset/re-enable input while a mouse button remains held, then press a different button. The old held button must not be resurrected without a release and a fresh press.
-- Press remote Ctrl, focus a native toolbar button, then release Ctrl. The laptop must not retain the modifier, and native controls must still receive their own input.
-- Keyboard-only behavior is explicit. Text entered using a hand on the Quest virtual keyboard is still text, not a distinguishable hand-pointer event; disabling keyboard blocks that channel too.
+- With host remote control off, neither keyboard nor pointer input may reach Linux. Enable it before Start, grant the portal permission, then test click, drag, scroll, Ctrl/Alt/Shift, navigation, Unicode/Russian text, Backspace and Enter.
+- During a drag or held modifier, block pointer input, disable remote input on PC, disconnect Wi-Fi, pause Quest, lose focus, and stop the app. No remote key or button may remain held.
+- Open all panels and set **Block all pointer devices** once. Hands, controller rays and a Quest-connected mouse must not forward pointer actions in any panel, including newly opened ones. Home hand tracking, the PC mouse and native app controls must remain usable.
+- Test Move/hover, Click, Scroll and Keyboard independently. Movement off with clicks on must click at the existing PC cursor without moving it. Clicks off must never synthesize a drag. Scroll-only must not move or click.
+- Disable scroll with a partially accumulated wheel step; it must not leak later. Disable keyboard during a paste or held modifier; pending text must stop and held keys release.
+- Compare **Full remote**, **Keyboard only**, **View only** and **Custom** with the actual switches. Reopen the launcher and panels to check persistence.
+- Test both physical-device filters. Unknown and virtual sources must stay blocked. Replugging a selected mouse may change its identity; stale selections must be removable.
+- Drag with an allowed mouse while a blocked hand/controller hovers, clicks or scrolls. The blocked source must not move or release the mouse drag. Unplugging the owner must release its buttons.
+- Re-enable input while a mouse button is still held, then press another button. The old button must not return without a release and fresh press.
+- Hold remote Ctrl, focus a native toolbar button, then release Ctrl. Linux must not retain the modifier. Click the viewport and confirm remote keyboard input resumes.
+- Test IME composition and a 300-character paste followed by Enter. Text must arrive once and in order. Losing focus or disconnecting cancels unsent text visibly. An oversized paste must be rejected rather than truncated.
+- The Quest virtual keyboard produces keyboard input even when selected by hand. Blocking pointer devices must leave it available; the Keyboard switch must block it.
 
-## Device diagnostic
+## Panels and appearance
 
-Enable the metadata diagnostic deliberately. Exercise hand hover/pinch/poke, each controller ray, and the physical mouse separately. Compare source, tool type, device name/descriptor and buttons; do not infer origin from timing or coordinates. If hands and controller rays have identical metadata, do not label a filter “hands only”. Clear the diagnostic afterward.
+- Rotate each monitor through 0°, 90°, 180° and 270°. Check decoded image orientation, all four corners, drag, hover, scroll and keyboard focus. Resize portrait and landscape windows. Reconnect and verify per-PC/per-monitor rotations persist independently.
+- Test the top and bottom bars independently in Always, Hover and Hide after a delay modes. Use mouse hover, controller rays and hands. **Controls** and **More** must keep every action reachable. Touching a local control must not click the remote desktop.
+- With two panels resumed, change bar mode, opacity and keep-awake from either panel and the launcher. Both panels must update.
+- Change theme/text size, resize, minimize, switch focus, return Home, close and reopen. Repeat disconnect/reconnect during recreation. Check for frozen video, duplicate audio, overlapping decoder ownership or unreleased input.
 
-## Recovery and shutdown
+## Diagnostics and recovery
 
-- Twenty connect/disconnect cycles, Quest sleep/wake, surface recreation, Wi-Fi loss and server restart.
-- Closing the controller while running, repeated Start/Stop, and termination during pairing must not leave an orphan stream or frozen input.
-- Diagnostic export contains no pairing code, keypress/text, coordinates, frames or audio.
+- Turn metadata collection on explicitly. Compare hands, each controller and a physical mouse using source/tool/device metadata. If hands and controller rays are indistinguishable, do not assume hand-only filtering is possible.
+- Check the 80-sample buffer and rate limit. Reset, disable and restart; samples must clear. No typed text, coordinates, pairing secrets, frames or audio may appear.
+- Run twenty connect/disconnect cycles, sleep/wake, surface recreation, Wi-Fi loss and server restart. Returning to settings or receiving another launcher intent must not abandon the active session or revive a stale one.
+- Close the Linux controller while running and terminate during pairing. No orphan stream may survive. Diagnostic export must exclude pairing details, typed text, coordinates, frames and audio.
 
-Record PASS/FAIL/NOT TESTED and relevant OS/headset versions. Do not call the build release-ready merely because it compiles.
+## Installation and updates
+
+- Install signed 0.3.0 over 0.2.0 without uninstalling. Saved preferences must survive and Android app info must show `metuxa v0.3.0`. Record separately what Horizon's Unknown Sources library displays.
+- Updates start disabled. Enable checks and optional automatic downloads. A downloaded release must never install by itself, and an installer prompt must not interrupt active streaming.
+- Exercise the first future signed update: check, download cancellation/retry, permission denial, Android confirmation cancellation, installation, insufficient storage and process death. Settings must survive. Changed signers, modified assets and older releases must be rejected.
+- Keep the previous AppImage and test from a private user-writable directory. Check automatic download, explicit installation, restart and manual rollback. Read-only files, symlinks and hard links must receive a useful error. See [Updates](UPDATES.md).

@@ -1,5 +1,7 @@
 // Metuxa application signaling carried only inside authenticated, pinned TLS.
-// The secure server consumes AUTH before this parser. Lines are newline-framed
+// The secure server consumes AUTH before this parser. Optional PAIR1 uses a
+// separate TLS 1.3 comparison/approval exchange and never enters this parser.
+// Stream/discovery remain version 5. Lines are newline-framed
 // ASCII, bounded to 4096 bytes; JSON bodies are compact and single-line.
 //
 //   HELLO <json>       server -> client: v5 stream params, media keys/capabilities

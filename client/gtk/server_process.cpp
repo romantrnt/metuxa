@@ -4,6 +4,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <signal.h>
+#include <pthread.h>
 #include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -38,22 +39,25 @@ ServerProcess::~ServerProcess() {
 }
 bool ServerProcess::start(const std::vector<std::string>& arguments, std::string& error) {
     if (running() || arguments.empty()) { error = "A server is already active, or its command is empty."; return false; }
-    int status_pipe[2];
+    int status_pipe[2], control_pipe[2];
     if (pipe2(status_pipe, O_CLOEXEC) != 0) { error = "Cannot create private status pipe."; return false; }
+    if (pipe2(control_pipe, O_CLOEXEC | O_NONBLOCK) != 0) { close(status_pipe[0]); close(status_pipe[1]); error = "Cannot create private control pipe."; return false; }
     std::vector<const gchar*> argv;
     for (const auto& a : arguments) argv.push_back(a.c_str());
     argv.push_back(nullptr);
-    int target = 3, output = -1, errors = -1;
+    int targets[] = {3, 4}, sources[] = {status_pipe[1], control_pipe[0]};
+    int output = -1, errors = -1;
     auto parent = getpid();
     GError* e = nullptr;
     bool ok = g_spawn_async_with_pipes_and_fds(nullptr, argv.data(), nullptr,
         static_cast<GSpawnFlags>(G_SPAWN_DO_NOT_REAP_CHILD), prepare_child, &parent,
-        -1, -1, -1, &status_pipe[1], &target, 1, &pid_, nullptr, &output, &errors, &e);
-    close(status_pipe[1]);
+        -1, -1, -1, sources, targets, 2, &pid_, nullptr, &output, &errors, &e);
+    close(status_pipe[1]); close(control_pipe[0]);
     if (!ok) {
-        close(status_pipe[0]); pid_ = 0;
+        close(status_pipe[0]); close(control_pipe[1]); pid_ = 0;
         error = e ? e->message : "Server could not be launched."; g_clear_error(&e); return false;
     }
+    control_fd_ = control_pipe[1];
     stopping_ = false;
     std::array<int, 3> descriptors{output, errors, status_pipe[0]};
     for (std::size_t i = 0; i < pipes_.size(); ++i) {
@@ -64,6 +68,7 @@ bool ServerProcess::start(const std::vector<std::string>& arguments, std::string
             signal_child(SIGKILL);
             int result; while (waitpid(pid_, &result, 0) < 0 && errno == EINTR) {}
             g_spawn_close_pid(pid_); pid_ = 0;
+            close(control_fd_); control_fd_ = -1;
             for (int fd : descriptors) if (fd >= 0) close(fd);
             for (auto& pipe : pipes_) { if (pipe.source) g_source_remove(pipe.source); pipe = {}; }
             return false;
@@ -88,6 +93,26 @@ void ServerProcess::stop() {
 bool ServerProcess::set_input(bool enabled) {
     if (!running() || stopping_) return false;
     return kill(pid_, enabled ? SIGUSR2 : SIGUSR1) == 0;
+}
+bool ServerProcess::pairing_command(const std::string& command) {
+    if (!running() || stopping_ || control_fd_ < 0) return false;
+    bool valid = command == "PAIR_OPEN" || command == "PAIR_CLOSE";
+    for (const auto* prefix : {"PAIR_ACCEPT ", "PAIR_REJECT "}) {
+        const std::string p(prefix);
+        if (command.rfind(p, 0) == 0 && command.size() == p.size() + 32) {
+            valid = command.find_first_not_of("0123456789abcdef", p.size()) == std::string::npos;
+        }
+    }
+    if (!valid) return false;
+    const auto line = command + "\n";
+    // Block SIGPIPE for this call: a server crash must not terminate the UI.
+    sigset_t mask, previous, pending; sigemptyset(&mask); sigaddset(&mask, SIGPIPE);
+    if (pthread_sigmask(SIG_BLOCK, &mask, &previous) != 0) return false;
+    sigpending(&pending); const bool was_pending = sigismember(&pending, SIGPIPE);
+    ssize_t written; do { written = write(control_fd_, line.data(), line.size()); } while (written < 0 && errno == EINTR);
+    if (written < 0 && errno == EPIPE && !was_pending) { timespec zero{}; sigtimedwait(&mask, nullptr, &zero); }
+    pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+    return written == static_cast<ssize_t>(line.size());
 }
 gboolean ServerProcess::kill_timeout(gpointer data) {
     auto* self = static_cast<ServerProcess*>(data);
@@ -127,6 +152,7 @@ gboolean ServerProcess::read_ready(gint fd, GIOCondition condition, gpointer dat
     return G_SOURCE_CONTINUE;
 }
 void ServerProcess::close_pipes() {
+    if (control_fd_ >= 0) { close(control_fd_); control_fd_ = -1; }
     for (auto& p : pipes_) {
         if (p.source) g_source_remove(p.source);
         if (p.fd >= 0) close(p.fd);

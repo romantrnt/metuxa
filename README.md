@@ -4,13 +4,13 @@
 
 # metuxa
 
-**Your Linux desktop, in reach. In Meta Quest.**
+**Your Linux desktop on Meta Quest.**
 
 <p align="center">
   <img src="data/branding/metuxa-tux.png" alt="Tux holding the blue Meta infinity symbol" width="30%">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/branding/metuxa-wordmark-dark.svg">
-    <img src="docs/branding/metuxa-wordmark-light.svg" alt="metuxa" width="45%">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/metuxa-wordmark-dark.svg">
+    <img src="docs/assets/metuxa-wordmark-light.svg" alt="metuxa" width="45%">
   </picture>
 </p>
 
@@ -22,13 +22,15 @@ metuxa brings your Linux desktop into ordinary, resizable Horizon Home windows. 
 
 It is an independent continuation of [MetaShare](https://github.com/makemake-kbo/metashare), with the original history and MIT attribution preserved.
 
-## A desktop that stays yours
+## Features
 
 - **Up to three panels.** Share a physical screen and optional virtual displays. A separate, view-only mode shares one application window where the desktop portal supports it.
 - **H.265 and H.264.** Hardware encoding when available, software fallback, and adjustable frame rate and bitrate.
 - **Sound, once.** Optional system audio plays through the primary panel. No microphone capture.
 - **Deliberate input.** View-only on the server by default. Movement, clicks, scroll and keyboard have independent, shared controls across Quest panels.
-- **Explicit pairing.** Certificate-pinned TLS, a fresh secret for each server run, authenticated encrypted media and no plaintext fallback.
+- **Compare and pair.** Open a one-minute pairing window on the PC, compare the short code, and confirm on both devices. Manual fingerprint pairing remains available.
+- **Adjust your workspace.** Rotate each monitor, hide the top and bottom controls independently, choose a theme and text size. A Controls button stays available on Quest.
+- **Signed updates.** Check GitHub, download verified releases, and install from the app. Android keeps its system confirmation; Linux keeps a backup.
 - **Local connection.** Direct PC-to-headset streaming on your network, without a cloud relay or an account service.
 
 <details>
@@ -68,12 +70,20 @@ You need:
 1. Open **metuxa** on Linux. Start with one screen and the **Balanced** quality profile. Choose system sound and enable **Allow remote control** before starting if you want it.
 2. Click **Start server** and choose what to share in the desktop permission dialog. Input works only if the desktop grants it. Cancelling the dialog cancels that attempt.
 3. Open the matching metuxa APK on Quest. Select your PC through discovery or enter its address and base port, normally **7878**.
-4. Open **Pair headset** on the PC. Compare the full **SHA-256 fingerprint** and enter it with the **pairing code** on Quest, then connect. A discovery result is not proof of identity.
-5. Adjust the panel's input switches as needed. **Disconnect all** closes the headset sessions; **Stop server** ends sharing. Restarting the server changes its fingerprint and code, so saved pairing details must be updated.
+4. On the PC, open **Pair headset** and press **Pair a headset**. Connect from Quest. Compare all ten digits and confirm on both screens only if they match. Reject unexpected requests. The pairing window closes after one attempt or one minute. Older clients can use **Manual pairing** with the full fingerprint and secret.
+5. Adjust the panel's input switches as needed. **Disconnect all** closes the headset sessions; **Stop server** ends sharing. Restarting the server creates a fresh identity, so pair again after a restart.
 
 Keep the pairing code private. Anyone with that run's pairing details may connect while the server is running. Do not expose metuxa to the public internet or configure router port forwarding.
 
 Default network ports: discovery **UDP 7877**, TLS control **TCP 7878–7880** for panels 1–3, and negotiated UDP ports for encrypted media. Protocol 5 is intentionally incompatible with legacy MetaShare clients.
+
+## Settings and updates
+
+Open **Settings** on the PC or Quest. Quest has separate top/bottom panel modes: always visible, visible on hover, or hidden after a delay. Tap **Controls** to keep the bars open when using hands or a controller. Rotation is saved separately for each computer and monitor; pointer coordinates follow the displayed orientation.
+
+Updates are hosted by GitHub and signed with the release key. Choose manual checks, notifications or automatic downloads; installation remains explicit. The APK keeps `dev.metuxa.quest` and its signing identity, while its visible name follows the release, for example **metuxa v0.3.0**. Some Horizon library views may choose to display the package ID; Android's application label cannot force those views to change.
+
+Install 0.3.0 over 0.2.0 manually once. The old release has no updater. Do not uninstall a release-signed APK to upgrade it. Read [Updates](docs/UPDATES.md) for signature checks, rollback, permissions and the first-install transition.
 
 ## Input without surprises
 
@@ -85,7 +95,7 @@ Horizon OS can expose hands and controller rays as indistinguishable Android eve
 
 ## Build from source
 
-Native dependencies: a C++20 compiler, Meson/Ninja, pkg-config, OpenSSL, FFmpeg codec/util/swscale/swresample, PipeWire, **sdbus-c++ 1.5**, **gtkmm 4.10+ / GTK4** and json-glib development files.
+Native dependencies: a C++20 compiler, Meson/Ninja, pkg-config, OpenSSL, libcurl, FFmpeg codec/util/swscale/swresample, PipeWire, **sdbus-c++ 1.5**, **gtkmm 4.10+ / GTK4** and json-glib development files.
 
 ```sh
 meson setup build -Dportal=enabled -Dmutter=disabled -Dbuildtype=debugoptimized

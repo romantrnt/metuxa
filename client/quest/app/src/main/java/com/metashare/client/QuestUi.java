@@ -21,6 +21,15 @@ final class QuestUi {
     static final int TEXT = 0xfff2f2f2, MUTED = 0xffbdbdbd, ACCENT = 0xffdedede, INK = 0xff202020;
     static final int BORDER = 0xff3e3e3e, OUTLINE = 0xff858585, HOVER = 0xff414141, DISABLED = 0xff858585;
     static final int ERROR = 0xffffb4a8;
+    static Context themedContext(Context base) {
+        AppSettings settings = new AppSettings(base);
+        android.content.res.Configuration config = new android.content.res.Configuration(base.getResources().getConfiguration());
+        if (settings.theme() != 2) config.uiMode = (config.uiMode & ~android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+            | (settings.theme() == 1 ? android.content.res.Configuration.UI_MODE_NIGHT_NO : android.content.res.Configuration.UI_MODE_NIGHT_YES);
+        config.fontScale *= settings.textScale() / 100f;
+        return base.createConfigurationContext(config);
+    }
+    static int color(Context context, int resource) { return context.getColor(resource); }
     static int dp(Context context, float value) { return Math.round(value * context.getResources().getDisplayMetrics().density); }
     static GradientDrawable background(Context context, int color, int radius) {
         GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(context, radius)); return d;
@@ -30,13 +39,13 @@ final class QuestUi {
     }
     static Drawable buttonBackground(Context context, boolean primary) {
         StateListDrawable states = new StateListDrawable();
-        states.addState(new int[] { -android.R.attr.state_enabled }, outlined(context, FIELD, 10, BORDER, 1));
-        states.addState(new int[] { android.R.attr.state_selected, android.R.attr.state_focused }, outlined(context, ACCENT, 10, INK, 2));
-        states.addState(new int[] { android.R.attr.state_selected, android.R.attr.state_hovered }, outlined(context, TEXT, 10, INK, 1));
-        states.addState(new int[] { android.R.attr.state_focused }, outlined(context, primary ? ACCENT : HOVER, 10, primary ? INK : ACCENT, 2));
-        states.addState(new int[] { android.R.attr.state_hovered }, outlined(context, primary ? TEXT : HOVER, 10, primary ? INK : ACCENT, 1));
-        states.addState(new int[] { android.R.attr.state_selected }, outlined(context, ACCENT, 10, ACCENT, 1));
-        states.addState(new int[] {}, outlined(context, primary ? ACCENT : FIELD, 10, primary ? ACCENT : OUTLINE, 1));
+        states.addState(new int[] { -android.R.attr.state_enabled }, outlined(context, color(context, R.color.quest_field), 10, color(context, R.color.quest_border), 1));
+        states.addState(new int[] { android.R.attr.state_selected, android.R.attr.state_focused }, outlined(context, color(context, R.color.quest_accent), 10, color(context, R.color.quest_ink), 2));
+        states.addState(new int[] { android.R.attr.state_selected, android.R.attr.state_hovered }, outlined(context, color(context, R.color.quest_text), 10, color(context, R.color.quest_ink), 1));
+        states.addState(new int[] { android.R.attr.state_focused }, outlined(context, primary ? color(context, R.color.quest_accent) : color(context, R.color.quest_hover), 10, primary ? color(context, R.color.quest_ink) : color(context, R.color.quest_accent), 2));
+        states.addState(new int[] { android.R.attr.state_hovered }, outlined(context, primary ? color(context, R.color.quest_text) : color(context, R.color.quest_hover), 10, primary ? color(context, R.color.quest_ink) : color(context, R.color.quest_accent), 1));
+        states.addState(new int[] { android.R.attr.state_selected }, outlined(context, color(context, R.color.quest_accent), 10, color(context, R.color.quest_accent), 1));
+        states.addState(new int[] {}, outlined(context, primary ? color(context, R.color.quest_accent) : color(context, R.color.quest_field), 10, primary ? color(context, R.color.quest_accent) : color(context, R.color.quest_outline), 1));
         return new RippleDrawable(ColorStateList.valueOf(primary ? 0x26181818 : 0x24ffffff), states, null);
     }
     static TextView text(Context context, String value, int sp, int color) {
@@ -47,7 +56,7 @@ final class QuestUi {
         Button b = new Button(context); b.setText(label); b.setAllCaps(false); b.setTextSize(15); b.setLetterSpacing(0);
         b.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         b.setTextColor(new ColorStateList(new int[][] { { -android.R.attr.state_enabled }, { android.R.attr.state_selected }, {} },
-            new int[] { DISABLED, INK, primary ? INK : TEXT }));
+            new int[] { color(context, R.color.quest_disabled), color(context, R.color.quest_ink), primary ? color(context, R.color.quest_ink) : color(context, R.color.quest_text) }));
         b.setMinHeight(dp(context, 48)); b.setMinimumHeight(dp(context, 48));
         b.setMinWidth(dp(context, 48)); b.setMinimumWidth(dp(context, 48));
         b.setPadding(dp(context, 16), dp(context, 10), dp(context, 16), dp(context, 10));
@@ -67,11 +76,13 @@ final class QuestUi {
     static LinearLayout actions(Context context) { return new AdaptiveActions(context); }
     static void space(LinearLayout parent, int height) { View v = new View(parent.getContext()); parent.addView(v, new LinearLayout.LayoutParams(1, dp(parent.getContext(), height))); }
     static TextView heading(LinearLayout parent, String title) {
-        TextView t = text(parent.getContext(), title, 21, TEXT); t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        Context context = parent.getContext();
+        TextView t = text(parent.getContext(), title, 21, color(context, R.color.quest_text)); t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         t.setAccessibilityHeading(true); parent.addView(t); space(parent, 8); return t;
     }
     static void divider(LinearLayout parent) {
-        space(parent, 22); View line = new View(parent.getContext()); line.setBackgroundColor(BORDER);
+        Context context = parent.getContext();
+        space(parent, 22); View line = new View(parent.getContext()); line.setBackgroundColor(color(context, R.color.quest_border));
         parent.addView(line, new LinearLayout.LayoutParams(-1, dp(parent.getContext(), 1))); space(parent, 22);
     }
     /** Stack action groups when their actual labels/font scale do not fit. */

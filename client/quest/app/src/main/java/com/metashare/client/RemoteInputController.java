@@ -66,10 +66,16 @@ final class RemoteInputController {
         inputManager = (InputManager) activity.getSystemService(Activity.INPUT_SERVICE);
         if (inputManager != null) inputManager.registerInputDeviceListener(deviceListener, null);
         surface.setOnTouchListener((v, e) -> {
+            // A consumed touch never reaches View.onTouchEvent's usual focus path.
+            // Return typing to the PC after local controls, while preserving an open IME.
+            if (e.getActionMasked() == MotionEvent.ACTION_DOWN && activity.getCurrentFocus() instanceof android.widget.Button) surface.requestFocus();
             boolean consumed = capturePointer(e);
             if (consumed && e.getActionMasked() == MotionEvent.ACTION_UP) v.performClick();
             return consumed;
         });
+        // ViewGroup routes child hover through dispatchHoverEvent, bypassing the
+        // generic-motion listener. Consuming here prevents a second dispatch.
+        surface.setOnHoverListener((v, e) -> capturePointer(e));
         surface.setOnGenericMotionListener((v, e) -> capturePointer(e));
         keyboard = new View(activity) {
             @Override public boolean onCheckIsTextEditor() { return true; }
@@ -176,7 +182,7 @@ final class RemoteInputController {
     void release() {
         lostFocus(); released = true;
         if (inputManager != null) inputManager.unregisterInputDeviceListener(deviceListener);
-        surface.setOnTouchListener(null); surface.setOnGenericMotionListener(null);
+        surface.setOnTouchListener(null); surface.setOnHoverListener(null); surface.setOnGenericMotionListener(null);
         InputMethodManager ime = (InputMethodManager) activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
         if (ime != null) ime.hideSoftInputFromWindow(keyboard.getWindowToken(), 0);
     }

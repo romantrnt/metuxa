@@ -8,6 +8,16 @@ The Quest must verify the exact expected fingerprint before sending the pairing 
 
 The code is a per-run secret, not a six-digit PIN and not a one-connection-only credential: it can authenticate the additional monitor panels and reconnects during the same server run. Stop/Start revokes it. Anyone who learns it and the server fingerprint during that run may connect; keep the pairing display private.
 
+## Confirmed pairing
+
+Version 0.3.0 adds an optional `PAIR1` exchange over a quarantined TLS 1.3 connection. It sends no media or remote input. The PC must explicitly open a one-minute window, and the user must compare all ten displayed digits and confirm on both devices. The comparison is bound to the negotiated certificate and committed fresh randomness. A fake server cannot bypass the Quest confirmation by sending an approval message.
+
+The display carries a 32-bit short authentication string. Its protection depends on honest comparison and bounded attempts; it is not equivalent to the entropy of the full manual fingerprint. Skipping the comparison loses the MITM protection of this flow. The PC accepts one pending attempt, limits attempts per server run, and invalidates requests on expiry, cancellation and disconnection. A private command pipe approves only the exact request ID. After approval, normal streaming reconnects through the existing pinned TLS authentication. No permanent trusted device or server key is created. See [Pairing protocol](PAIRING.md) for exact bytes, limits and threat model.
+
+## Signed updates
+
+The clients pin the public key of the existing release signing identity. They verify the manifest before trusting its fields, then check the asset digest, version and protocol range. APK package and signer checks precede Android's installer; Linux keeps a previous AppImage during atomic replacement. These checks do not validate the correctness of signed code or protect a compromised release key. See [Updates](UPDATES.md).
+
 ## Media
 
 Each authenticated monitor connection gets fresh, independent server-to-client and client-to-server AES-256-GCM keys and nonce prefixes over TLS. The authenticated UDP envelope covers RTP and RTCP. It includes a direction and monotonically increasing packet counter, with a bounded replay window and a per-key counter limit. Invalid authentication, wrong direction, old/replayed packets and malformed envelopes are discarded before packet parsing. No raw-RTP fallback is available.
@@ -32,12 +42,12 @@ No global hand-tracking permission is changed. Movement/hover, clicks/drag and s
 ## Wire profile and resource bounds
 
 - Discovery is `METUXAD1`, version 5, UDP 7877 by default. TLS starts on TCP 7878 (each additional monitor uses the next port). Discovery never carries a trust grant or pairing secret.
-- The first TLS application line is `AUTH ` followed by exactly 32 hex characters. Only after its constant-time token comparison succeeds does the server send `HELLO`. The SHA-256 pin is checked inside the Android trust manager during the TLS handshake, before any application secret is sent.
+- A normal streaming connection starts with `AUTH ` followed by exactly 32 hex characters. Only after its constant-time token comparison succeeds does the server send `HELLO`. The SHA-256 pin is checked inside the Android trust manager during the TLS handshake, before any application secret is sent.
 - GCM datagrams are `MXG1`, a one-byte direction (1 server, 2 client), three zero reserved bytes, an unsigned 64-bit big-endian counter, ciphertext, and a 16-byte tag. The complete 16-byte header is AAD. Nonces are the per-key random 4-byte prefix followed by the counter. Counters begin at 1 and stop before 2^32; a connection must be renewed at that limit. Every retransmission gets a new counter.
 - The receiver commits its 2048-packet replay window only after successful authentication. Media plaintext is limited to 1500 bytes; ordinary video RTP packets are at most 1400 bytes, plus 32 bytes of authenticated-envelope overhead.
 - The client uses the authenticated TLS peer's address and HELLO's authenticated UDP port. The server accepts feedback only from the TLS peer's address and READY's exact UDP port. Both validate AEAD before RTP/RTCP parsing.
 - The server echoes authenticated `PING` heartbeats. It sends `INPUT_STATE true|false` after START and each heartbeat; a live server input gate takes effect immediately, while headset controls reflect it within about three seconds. A gate cannot create missing portal permissions.
-- Control lines are capped at 4096 bytes, handshake/authentication have 5-second deadlines, idle/partial server reads have 10-second deadlines, and writes have a 3-second server deadline. Control message rate and RTCP processing are capped. Input queue overflow triggers explicit release-all instead of silently losing key/button releases.
+- Control lines are capped at 4096 bytes. Ordinary handshake/authentication have 5-second deadlines; the explicit pairing window has a separate 60-second deadline. Idle/partial server reads have 10-second deadlines, and writes have a 3-second server deadline. Control message rate and RTCP processing are capped. Input queue overflow triggers explicit release-all instead of silently losing key/button releases.
 
 ## Long-running sessions
 

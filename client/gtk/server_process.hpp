@@ -19,6 +19,7 @@ public:
     bool start(const std::vector<std::string>& arguments, std::string& error);
     void stop();
     bool set_input(bool enabled);
+    bool pairing_command(const std::string& command);
     bool running() const { return pid_ > 0; }
     bool stopping() const { return stopping_; }
 private:
@@ -36,6 +37,7 @@ private:
     void close_pipes();
     void consume(Pipe& pipe, const char* data, std::size_t length);
     void signal_child(int signal);
+    int control_fd_ = -1;
     GPid pid_ = 0;
     guint watch_ = 0;
     guint kill_timer_ = 0;

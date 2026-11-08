@@ -6,8 +6,6 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -17,51 +15,60 @@ import java.util.HashSet;
 import java.util.Set;
 
 /** Each panel has a renderer, but all panels belong to one explicitly selected session. */
-abstract class BaseStreamActivity extends Activity implements SurfaceHolder.Callback, ConnectionCoordinator.Panel {
+abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.Listener, ConnectionCoordinator.Panel {
     private static final ArrayList<BaseStreamActivity> ACTIVE = new ArrayList<>();
     private static final Set<Integer> LAUNCHING = new HashSet<>();
     private final ConnectionCoordinator coordinator = ConnectionCoordinator.INSTANCE;
     private final SessionInputForwarder forwarder = new SessionInputForwarder();
     private ConnectionCoordinator.Connection connection;
     private RemoteSurfaceView surface;
-    private FrameLayout viewport, root;
+    private FrameLayout viewport;
+    private PanelOverlay root;
+    private AppSettings settings;
+    private int rotation, appliedTheme, appliedScale, appliedUiMode;
     private TextView status;
     private QuestToolbar toolbar;
+    private AlertDialog settingsDialog;
     private RemoteInputController input;
     private StreamSession stream;
     private long generation, streamEpoch;
     private int monitorIndex, streamWidth, streamHeight;
-    private boolean surfaceReady, destroyed, registered, inputAvailable;
+    private boolean surfaceReady, destroyed, registered, inputAvailable, refreshingTheme;
     abstract boolean primary();
+    @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(QuestUi.themedContext(base)); }
     @Override protected void onCreate(Bundle state) {
-        super.onCreate(state);
+        super.onCreate(state); settings = new AppSettings(this); appliedTheme = settings.theme(); appliedScale = settings.textScale(); appliedUiMode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
         generation = getIntent().getLongExtra("generation", -1);
         monitorIndex = primary() ? 0 : getIntent().getIntExtra("monitor_index", -1);
         connection = coordinator.current();
         if (!coordinator.matches(generation) || monitorIndex < 0 || monitorIndex > 2 || !primary() && (monitorIndex == 0 || monitorIndex >= Math.min(connection.desiredMonitors, connection.availableMonitors))) { finish(); return; }
         for (BaseStreamActivity other : ACTIVE) if (other.generation == generation && other.monitorIndex == monitorIndex && !other.isFinishing()) { finish(); return; }
         registered = true; ACTIVE.add(this); LAUNCHING.remove(monitorIndex); coordinator.register(this);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        applyKeepAwake();
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
-        root = new FrameLayout(this); root.setBackgroundColor(QuestUi.BACKGROUND); root.setFocusableInTouchMode(true);
+        root = new PanelOverlay(this, () -> { if (input != null) input.lostFocus(); }); root.setBackgroundColor(QuestUi.color(this, R.color.quest_background)); root.setFocusableInTouchMode(true);
         viewport = new FrameLayout(this); viewport.setBackgroundColor(android.graphics.Color.BLACK);
-        FrameLayout.LayoutParams viewportParams = new FrameLayout.LayoutParams(-1, -1); viewportParams.topMargin = QuestUi.dp(this, 64); viewportParams.bottomMargin = QuestToolbar.height(this);
+        FrameLayout.LayoutParams viewportParams = new FrameLayout.LayoutParams(-1, -1);
         root.addView(viewport, viewportParams);
-        surface = new RemoteSurfaceView(this); surface.getHolder().addCallback(this); surface.setFocusableInTouchMode(true); surface.setContentDescription("Remote monitor " + (monitorIndex + 1) + " on " + connection.endpoint.key());
+        rotation = settings.rotation(connection.endpoint.key(), monitorIndex);
+        surface = new RemoteSurfaceView(this); surface.setMonitorRotation(rotation); surface.setRenderListener(this); surface.setFocusableInTouchMode(true); surface.setContentDescription("Remote monitor " + (monitorIndex + 1) + " on " + connection.endpoint.key());
         viewport.addView(surface, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
-        status = QuestUi.text(this, "", 13, QuestUi.MUTED); status.setMaxLines(3); status.setBackgroundColor(QuestUi.PANEL); status.setGravity(Gravity.CENTER_VERTICAL); status.setPadding(QuestUi.dp(this, 16), QuestUi.dp(this, 6), QuestUi.dp(this, 16), 0);
-        root.addView(status, new FrameLayout.LayoutParams(-1, QuestUi.dp(this, 64), Gravity.TOP));
+        status = QuestUi.text(this, "", 13, QuestUi.color(this, R.color.quest_muted)); status.setMaxLines(3); status.setBackgroundColor(QuestUi.color(this, R.color.quest_panel)); status.setGravity(Gravity.CENTER_VERTICAL); status.setPadding(QuestUi.dp(this, 16), QuestUi.dp(this, 6), QuestUi.dp(this, 152), QuestUi.dp(this, 6)); status.setClickable(true); status.setMinHeight(QuestUi.dp(this, 64)); status.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        root.addView(status, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
         forwarder.setStatusListener(this::showStatus);
         input = new RemoteInputController(this, root, surface, forwarder);
         toolbar = new QuestToolbar(this, root, primary(), new QuestToolbar.Callbacks() {
+            public void onLocalControlActivated() { input.lostFocus(); }
             public void onScreenCountRequested(int count) { setMonitorCount(count); }
             public void onKeyboardRequested() { input.showKeyboard(); }
             public void onPointerToggle() { coordinator.togglePointer(BaseStreamActivity.this); }
             public void onSettingsRequested() {
-                input.lostFocus(); Intent i = new Intent(BaseStreamActivity.this, MainActivity.class); i.putExtra("manage", true); i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT); startActivity(i);
+                showSettings();
             }
-            public void onDisconnectRequested() { coordinator.disconnect(); }
+            public void onDisconnectRequested() { requestDisconnect(); }
+            public void onRotateRequested() { rotateMonitor(); }
         });
+        toolbar.setRotation(rotation); root.panels(status, toolbar.view());
         setContentView(root); root.requestFocus(); viewport.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> applyAspectRatio());
         showStatus("Connecting securely…"); policyChanged();
     }
@@ -119,7 +126,7 @@ abstract class BaseStreamActivity extends Activity implements SurfaceHolder.Call
         }
         toolbar.setScreenCount(count, connection.availableMonitors);
     }
-    private String streamingStatus() { return inputAvailable ? "Streaming securely" : "Streaming securely • view-only (server input disabled)"; }
+    private String streamingStatus() { return inputAvailable ? "Connected" : "Connected · remote input is off on the PC"; }
     private void showStatus(String text) {
         if (status == null || connection == null) return;
         String message = "metuxa  /  " + connection.endpoint.key() + "  /  monitor " + (monitorIndex + 1) + "\n" + text;
@@ -130,19 +137,60 @@ abstract class BaseStreamActivity extends Activity implements SurfaceHolder.Call
         if (viewport == null || surface == null) return;
         int width = viewport.getWidth(), height = viewport.getHeight();
         if (width <= 0 || height <= 0 || streamWidth <= 0 || streamHeight <= 0) return;
-        double scale = Math.min((double) width / streamWidth, (double) height / streamHeight);
-        int w = Math.max(1, (int) Math.round(streamWidth * scale)), h = Math.max(1, (int) Math.round(streamHeight * scale));
+        int[] size = MonitorGeometry.fit(width, height, streamWidth, streamHeight, rotation);
+        int w = size[0], h = size[1];
         FrameLayout.LayoutParams old = (FrameLayout.LayoutParams) surface.getLayoutParams();
         if (old.width != w || old.height != h) surface.setLayoutParams(new FrameLayout.LayoutParams(w, h, Gravity.CENTER));
     }
-    @Override public void surfaceCreated(SurfaceHolder holder) { surfaceReady = true; startStream(); }
-    @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { applyAspectRatio(); }
-    @Override public void surfaceDestroyed(SurfaceHolder holder) { surfaceReady = false; stopStream(); }
+    private void applyKeepAwake() {
+        if (settings.keepAwake()) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+    private void rotateMonitor() {
+        input.lostFocus(); rotation = (rotation + 90) % 360;
+        settings.rotation(connection.endpoint.key(), monitorIndex, rotation);
+        surface.setMonitorRotation(rotation); applyAspectRatio(); toolbar.setRotation(rotation); root.reveal();
+    }
+    private void showSettings() {
+        input.lostFocus();
+        if (settingsDialog != null && settingsDialog.isShowing()) return;
+        settingsDialog = new SettingsDialog(this, () -> {
+            settingsDialog = null;
+            refreshAllSettings();
+        }, () -> {
+            openLauncher(false);
+        }, () -> openLauncher(true)).show();
+    }
+    static void refreshAllSettings() {
+        // Quest can keep several panels resumed; waiting for onResume leaves peers stale.
+        for (BaseStreamActivity panel : new ArrayList<>(ACTIVE)) panel.refreshSettings();
+    }
+    private boolean refreshSettings() {
+        if (destroyed || isFinishing() || settings == null) return false;
+        if (appliedTheme != settings.theme() || appliedScale != settings.textScale()) {
+            if (!refreshingTheme) { refreshingTheme = true; recreate(); }
+            return true;
+        }
+        applyKeepAwake(); if (root != null) root.configure(); return false;
+    }
+    private void openLauncher(boolean updates) {
+        Intent i = new Intent(this, MainActivity.class); i.putExtra("manage", true); i.putExtra("updates", updates);
+        i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT); startActivity(i);
+    }
+    private void requestDisconnect() {
+        input.lostFocus();
+        if (!settings.confirmDisconnect()) { coordinator.disconnect(); return; }
+        new AlertDialog.Builder(this).setTitle("Disconnect all screens?")
+            .setPositiveButton("Disconnect", (d, w) -> coordinator.disconnect()).setNegativeButton("Keep streaming", null).show();
+    }
+    @Override public void renderSurfaceAvailable() { surfaceReady = true; startStream(); }
+    @Override public void renderSurfaceSizeChanged() { applyAspectRatio(); }
+    @Override public void renderSurfaceDestroyed() { surfaceReady = false; stopStream(); }
     @Override public void policyChanged() { if (input != null) input.policyChanged(); if (toolbar != null) toolbar.setInputOptions(new AppSettings(this).inputOptions()); }
     @Override public void disconnectPanel() { stopStream(); finish(); }
     @Override public void onWindowFocusChanged(boolean focused) { super.onWindowFocusChanged(focused); if (input != null) input.setWindowFocused(focused); }
-    @Override protected void onPause() { if (input != null) input.setResumed(false); super.onPause(); }
-    @Override protected void onResume() { super.onResume(); if (input != null) { input.setResumed(true); input.setWindowFocused(hasWindowFocus()); policyChanged(); } }
+    @Override protected void onPause() { if (input != null) input.setResumed(false); if (root != null) root.resumed(false); super.onPause(); }
+    @Override protected void onResume() { super.onResume(); if (refreshSettings()) return; if (root != null) { root.resumed(true); root.configure(); applyKeepAwake(); } if (input != null) { input.setResumed(true); input.setWindowFocused(hasWindowFocus()); policyChanged(); } }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         // A remotely pressed key must be released even if focus moved to a
         // native button meanwhile. Still deliver the event to that local control.
@@ -152,17 +200,18 @@ abstract class BaseStreamActivity extends Activity implements SurfaceHolder.Call
         if (releasedRemoteKey || input != null && input.handleKey(event)) return true;
         return super.dispatchKeyEvent(event);
     }
-    @Override public void onBackPressed() {
-        if (primary()) new AlertDialog.Builder(this).setTitle("Disconnect all screens?").setMessage("Return to the launcher and release remote input.")
-                .setPositiveButton("Disconnect", (d, w) -> coordinator.disconnect()).setNegativeButton("Keep streaming", null).show();
-        else finish();
+    @Override public void onConfigurationChanged(android.content.res.Configuration config) {
+        super.onConfigurationChanged(config);
+        if (settings != null && settings.theme() == 2 && (config.uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) != appliedUiMode) recreate();
+        else applyAspectRatio();
     }
+    @Override public void onBackPressed() { if (primary()) requestDisconnect(); else finish(); }
     @Override protected void onDestroy() {
         if (!registered) { super.onDestroy(); return; }
-        destroyed = true; stopStream(); if (input != null) input.release();
+        destroyed = true; if (settingsDialog != null) settingsDialog.dismiss(); if (root != null) root.close(); stopStream(); if (input != null) input.release();
         ACTIVE.remove(this); LAUNCHING.remove(monitorIndex); coordinator.unregister(this);
-        if (primary() && coordinator.matches(generation)) { LAUNCHING.clear(); coordinator.disconnect(); }
-        else if (!primary() && coordinator.matches(generation)) {
+        if (!isChangingConfigurations() && primary() && coordinator.matches(generation)) { LAUNCHING.clear(); coordinator.disconnect(); }
+        else if (!isChangingConfigurations() && !primary() && coordinator.matches(generation)) {
             // A system-closed secondary remains closed until the user presses +.
             connection.desiredMonitors = Math.min(connection.desiredMonitors, Math.max(1, monitorIndex));
             for (BaseStreamActivity a : new ArrayList<>(ACTIVE)) if (a.primary() && a.generation == generation) a.updateMonitors();

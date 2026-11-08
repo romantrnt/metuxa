@@ -5,13 +5,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.Surface;
-import android.view.SurfaceView;
 import org.json.JSONObject;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
@@ -30,37 +28,31 @@ public final class StreamSession {
         default void onDisconnected() {}
         default void onInputCapability(boolean available) {}
     }
-    private volatile SurfaceView surfaceView;
+    private final RemoteSurfaceView surfaceView;
     private final int monitorIndex;
     private final Listener listener;
+    private final AppSettings settings;
     private final Handler main=new Handler(Looper.getMainLooper());
     private volatile boolean running;
     private Thread worker;
-    private volatile Socket signalingSocket;
+    private volatile SocketShutdown signalingSocket;
     private volatile VideoDecoder videoDecoder;
     private final SessionInputQueue inputQueue=new SessionInputQueue(512);
     private String host,fingerprint,pairingToken;
     private int basePort;
     private boolean audioEnabled;
 
-    public StreamSession(Context context,SurfaceView surfaceView,int monitorIndex,Listener listener) {
+    public StreamSession(Context context,RemoteSurfaceView surfaceView,int monitorIndex,Listener listener) {
         this.surfaceView=surfaceView; this.monitorIndex=monitorIndex; this.listener=listener;
+        this.settings=new AppSettings(context.getApplicationContext());
     }
     public synchronized void configure(String host,int basePort,String fingerprint,String pairingToken,boolean audioEnabled) {
         if(worker!=null) throw new IllegalStateException("Stop the session before changing its server");
-        if(host==null || host.trim().isEmpty() || basePort<1 || monitorIndex<0 || basePort+monitorIndex>65535)
+        if(host==null || host.trim().isEmpty() || basePort<1 || monitorIndex<0 || monitorIndex>=16 || basePort+monitorIndex>65535)
             throw new IllegalArgumentException("Invalid server endpoint");
         SecureTransport.unhex(fingerprint,32); SecureTransport.unhex(pairingToken,16);
         this.host=host.trim(); this.basePort=basePort; this.fingerprint=fingerprint;
         this.pairingToken=pairingToken; this.audioEnabled=audioEnabled && monitorIndex==0;
-    }
-    public void setRenderer(SurfaceView view) {
-        surfaceView=view;
-        VideoDecoder decoder=videoDecoder;
-        if(decoder!=null && view!=null) {
-            Surface surface=view.getHolder().getSurface();
-            if(surface!=null && surface.isValid()) decoder.setSurface(surface);
-        }
     }
     public synchronized void start() {
         if(worker!=null) return;
@@ -71,7 +63,8 @@ public final class StreamSession {
     public synchronized void stop() {
         running=false;
         inputQueue.close();
-        closeSignalingSocket();
+        SocketShutdown closing=signalingSocket;
+        if(closing!=null) closing.request(); // TLS close can write; never perform it on the UI thread.
         if(worker!=null) worker.interrupt();
     }
     public void sendPointerMove(float x,float y) {
@@ -85,7 +78,13 @@ public final class StreamSession {
     public void releaseAllInput() { inputQueue.releaseAll(); }
     private void enqueueInput(String body) { inputQueue.offer(body); }
     private void runLoop() {
+        boolean ownsMonitor=false;
         try {
+            // Recreated Activities have new StreamSession objects. Keep the old
+            // session's decoder/audio teardown ahead of its replacement without
+            // joining a worker on the UI thread or reusing a timed-out codec.
+            MonitorSessionGate.acquire(monitorIndex);
+            ownsMonitor=true;
             int retry=0;
             while(running) {
                 try {
@@ -101,20 +100,27 @@ public final class StreamSession {
                     // Never log wire content, credentials, session keys, or the
                     // HELLO payload. Error messages from peers are untrusted.
                     Log.w(TAG,"Secure session ended ("+failure.getClass().getSimpleName()+")");
-                    if(running) postStatus("Disconnected. Retrying the selected server…");
+                    if(running && settings.reconnect()) postStatus("Disconnected. Retrying the selected server…");
                 } finally { closeSignalingSocket(); }
+                if(running && !settings.reconnect()) {
+                    postStatus("Connection closed. Choose Connect to try again."); running=false;
+                }
                 if(running) {
                     try { Thread.sleep(Math.min(5000,1000+(retry++)*500L)); }
                     catch(InterruptedException e) { Thread.currentThread().interrupt(); break; }
                 }
             }
+        } catch(InterruptedException stopped) {
+            Thread.currentThread().interrupt();
         } finally {
             running=false;
+            if(ownsMonitor) MonitorSessionGate.release(monitorIndex);
             synchronized(this) { if(worker==Thread.currentThread()) worker=null; }
         }
     }
     private void negotiateAndRender(InetSocketAddress endpoint) throws Exception {
         VideoDecoder decoder=null;
+        RenderSurface.Lease renderLease=null;
         AudioDecoder audioDecoder=null;
         RtpReceiver receiver=null;
         Thread inputSender=null;
@@ -122,7 +128,8 @@ public final class StreamSession {
         final AtomicBoolean sessionActive=new AtomicBoolean(true);
         try {
             SSLSocket socket=SecureTransport.pinnedSocket(fingerprint);
-            signalingSocket=socket;
+            final SocketShutdown socketShutdown=new SocketShutdown(socket,"MetuxaSocketClose-"+monitorIndex);
+            signalingSocket=socketShutdown;
             if(!running) return;
             socket.setTcpNoDelay(true); socket.setSoTimeout(5000);
             socket.connect(endpoint,3000); socket.startHandshake();
@@ -164,8 +171,8 @@ public final class StreamSession {
                 catch(Exception unsupportedAudio) { audioDecoder.release(); audioDecoder=null; }
             }
             decoder=new VideoDecoder(); videoDecoder=decoder;
-            SurfaceView view=surfaceView;
-            Surface surface=view==null?null:view.getHolder().getSurface();
+            renderLease=surfaceView.acquireSurface();
+            Surface surface=renderLease==null?null:renderLease.surface();
             if(surface==null || !surface.isValid()) throw new IOException("Render surface unavailable");
             decoder.init(surface,codec,width,height,new VideoDecoder.Listener() {
                 @Override public void onFirstFrameRendered() { postStatus(""); }
@@ -202,7 +209,7 @@ public final class StreamSession {
                         }
                     }
                 } catch(InterruptedException ignored) { Thread.currentThread().interrupt(); }
-                catch(IOException disconnected) { try { socket.close(); } catch(IOException ignored) {} }
+                catch(IOException disconnected) { socketShutdown.request(); }
             },"MetuxaInput-"+monitorIndex);
             inputSender.start();
             socket.setSoTimeout(3000);
@@ -235,6 +242,7 @@ public final class StreamSession {
             if(encryptor!=null) encryptor.close();
             videoDecoder=null;
             if(decoder!=null) try { decoder.release(); } catch(Exception ignored) {}
+            if(renderLease!=null) renderLease.close();
             if(audioDecoder!=null) try { audioDecoder.release(); } catch(Exception ignored) {}
             main.post(()->{ listener.onInputCapability(false); listener.onDisconnected(); });
         }
@@ -245,7 +253,9 @@ public final class StreamSession {
     }
     private void postStatus(String text) { main.post(()->listener.onStatus(text)); }
     private void closeSignalingSocket() {
-        Socket socket=signalingSocket; signalingSocket=null;
-        if(socket!=null) try { socket.close(); } catch(IOException ignored) {}
+        // Only called by the background session worker. Even if stop() already
+        // requested close, await its completion before this monitor is reused.
+        SocketShutdown closing=signalingSocket; signalingSocket=null;
+        if(closing!=null) closing.await();
     }
 }

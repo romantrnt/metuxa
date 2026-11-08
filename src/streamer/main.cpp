@@ -18,6 +18,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <poll.h>
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -69,6 +70,59 @@ void on_signal(int sig) {
     else g_stop = 1;
 }
 
+// Only inherited, private local IPC can open/approve a numeric comparison.
+// Terminal-only runs retain manual fingerprint/token pairing.
+class PairingControl {
+    std::shared_ptr<security::PairingGate> gate_;
+    std::atomic<bool> running_{false};
+    std::thread thread_;
+    int fd_=-1;
+  public:
+    ~PairingControl() {
+        running_=false;
+        if(thread_.joinable()) thread_.join();
+        if(gate_) gate_->close();
+        if(fd_>=0) ::close(fd_);
+    }
+    bool start(int fd,int status_fd,std::shared_ptr<security::PairingGate> gate,std::string& error) {
+        struct stat st{}; const int flags=::fcntl(fd,F_GETFL);
+        if(fd==status_fd || flags<0 || (flags&O_ACCMODE)!=O_RDONLY || ::fstat(fd,&st)<0 ||
+           !S_ISFIFO(st.st_mode) || st.st_uid!=::getuid() || (st.st_mode&0077)!=0 ||
+           ::fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0 || ::fcntl(fd,F_SETFD,FD_CLOEXEC)<0) {
+            error="Control fd must be a private read-only pipe"; return false;
+        }
+        fd_=fd; gate_=std::move(gate); running_=true;
+        thread_=std::thread([this] {
+            std::string pending;
+            while(running_) {
+                gate_->tick();
+                pollfd p{fd_,POLLIN,0}; const int ready=::poll(&p,1,100);
+                if(ready<0) { if(errno==EINTR) continue; break; }
+                if(!ready) continue;
+                char bytes[256]; const auto n=::read(fd_,bytes,sizeof bytes);
+                if(n<0 && (errno==EINTR || errno==EAGAIN)) continue;
+                if(n<=0) break;
+                for(ssize_t i=0;i<n;++i) {
+                    const char c=bytes[i];
+                    if(c=='\n') {
+                        if(pending=="PAIR_OPEN") gate_->arm();
+                        else if(pending=="PAIR_CLOSE") gate_->close();
+                        else if(pending.size()==44 && (pending.starts_with("PAIR_ACCEPT ") || pending.starts_with("PAIR_REJECT "))) {
+                            std::array<std::uint8_t,16> id{};
+                            if(!security::unhex(std::string_view(pending).substr(12),id.data(),id.size())) { running_=false; break; }
+                            gate_->decide(std::string_view(pending).substr(12),pending.starts_with("PAIR_ACCEPT "));
+                        } else { running_=false; break; }
+                        pending.clear();
+                    } else if(c<32 || c>126 || pending.size()>=80) { running_=false; break; }
+                    else pending+=c;
+                }
+            }
+            gate_->close();
+        });
+        return true;
+    }
+};
+
 struct Options {
     std::string source =
 #if defined(METASHARE_HAVE_PORTAL)
@@ -102,6 +156,7 @@ struct Options {
     // the source falls back to capture-only by itself.
     bool input = false;
     int status_fd = -1;
+    int control_fd = -1;
     bool validate_only = false;
 };
 
@@ -112,7 +167,7 @@ constexpr std::uint32_t kChannelAudioMic = 2;
 
 void usage(const char* argv0) {
     std::fprintf(stderr,
-      "metuxa 0.2.0 - protected desktop streaming for Quest\n\n"
+      "metuxa 0.3.0 - protected desktop streaming for Quest\n\n"
       "Usage: %s [options]\n"
       "  --source <portal|window|mutter|test>   desktop, single window, virtual or test\n"
       "  --monitors <1..3>                    one physical + optional virtual displays\n"
@@ -126,6 +181,7 @@ void usage(const char* argv0) {
       "  --audio-bitrate <16..256>             Opus kbps, default 96\n"
       "  --input / --no-input                 request remote control / view-only (default)\n"
       "  --status-fd <N>                      private JSON status and pairing pipe\n"
+      "  --control-fd <N>                     private pairing approval pipe\n"
       "  --validate                          validate options without starting anything\n"
       "  --version / --help\n\n"
       "TLS control and authenticated encrypted media are mandatory. Start creates\n"
@@ -141,7 +197,7 @@ bool parse_args(int argc, char** argv, Options& o) {
         auto val=[&](int& dst){return i+1<argc && app::integer(argv[++i],dst);};
         auto str=[&](std::string& dst){if(i+1>=argc)return false;dst=argv[++i];return true;};
         if(a=="--help" || a=="-h"){usage(argv[0]);std::exit(0);}
-        else if(a=="--version"){std::puts("metuxa 0.2.0 (MetaShare ed13beb lineage, protocol 5)");std::exit(0);}
+        else if(a=="--version"){std::puts("metuxa 0.3.0 (MetaShare ed13beb lineage, protocol 5)");std::exit(0);}
         else if(a=="--validate")o.validate_only=true;
         else if(a=="--source"){if(!str(o.source))return false;}
         else if(a=="--codec"){if(!str(o.codec))return false;}
@@ -153,6 +209,7 @@ bool parse_args(int argc, char** argv, Options& o) {
         else if(a=="--bitrate"){if(!val(o.bitrate_kbps))return false;}
         else if(a=="--audio-bitrate"){if(!val(o.audio_bitrate_kbps))return false;}
         else if(a=="--status-fd"){if(!val(o.status_fd) || o.status_fd<3)return false;}
+        else if(a=="--control-fd"){if(!val(o.control_fd) || o.control_fd<3)return false;}
         else if(a=="--port"){int n;if(!val(n) || n<1024 || n>65533)return false;o.port=static_cast<std::uint16_t>(n);}
         else if(a=="--no-hw")o.hardware=false;
         else if(a=="--no-discovery")o.discovery=false;
@@ -371,6 +428,14 @@ int main(int argc, char** argv) {
     if(!status.emit("{\"type\":\"security\",\"fingerprint\":"+app::quote(credentials->fingerprint())+
                     ",\"pairing_code\":"+app::quote(credentials->pairing_code())+"}")){
         std::fprintf(stderr,"Private status consumer unavailable; refusing to start without pairing information.\n");return 1;
+    }
+    auto pairing_gate=std::make_shared<security::PairingGate>([&status](const std::string& event) { return status.emit(event); });
+    PairingControl pairing_control;
+    if(opt.control_fd>=0) {
+        if(!pairing_control.start(opt.control_fd,opt.status_fd,pairing_gate,status_err)) {
+            status.state("error",status_err); std::fprintf(stderr,"%s\n",status_err.c_str()); return 2;
+        }
+        credentials->set_pairing_gate(pairing_gate);
     }
     std::signal(SIGUSR1,on_signal);
     std::signal(SIGUSR2,on_signal);

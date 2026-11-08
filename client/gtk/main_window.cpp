@@ -45,18 +45,27 @@ std::string timestamp() {
 MainWindow::MainWindow() {
     std::string warning;
     settings_ = load_settings(settings_path(), warning);
+    preferences_ = load_preferences(preferences_path());
     dialogs_cancel_ = Gio::Cancellable::create();
-    build_ui(); load_widgets();
+    auto gtk_settings = Gtk::Settings::get_default();
+    original_theme_ = gtk_settings->property_gtk_theme_name().get_value().raw(); original_dark_ = gtk_settings->property_gtk_application_prefer_dark_theme();
+    build_ui(); build_preferences(); load_widgets(); apply_preferences();
+    if (preferences_.remember_window) set_default_size(preferences_.window_width, preferences_.window_height);
     if (!warning.empty()) append_log(warning);
     server_.on_log = [this](const auto& line) { append_log(line); };
     server_.on_event = [this](const auto& line) { on_event(line); };
     server_.on_exit = [this](int status, bool requested) { on_exit(status, requested); };
     signal_close_request().connect(sigc::mem_fun(*this, &MainWindow::close_requested), false);
-    set_status("Your desktop, in reach.", "Start a private session, then pair metuxa on your headset.", "idle");
-    clear_security(); update_actions();
+    set_status("Ready to share", "Start the server, then pair your headset.", "idle");
+    clear_security(); update_actions(); schedule_update_check();
 }
 MainWindow::~MainWindow() {
     log_timer_.disconnect(); save_timer_.disconnect(); startup_timer_.disconnect(); dialogs_cancel_->cancel();
+    update_timer_.disconnect(); update_poll_.disconnect(); pairing_timer_.disconnect();
+    if (update_job_) update_job_->cancel = true;
+    if (update_thread_.joinable()) update_thread_.join();
+    if (update_job_ && !update_job_->staging.empty() && update_job_->staging != staged_update_) discard_staged_appimage_update(update_job_->staging);
+    if (!staged_update_.empty()) discard_staged_appimage_update(staged_update_);
     // The supervisor is declared before widgets and will outlive them. Remove
     // all widget callbacks now, then its destructor stops and reaps the child.
     server_.on_log = {}; server_.on_event = {}; server_.on_exit = {};
@@ -81,13 +90,14 @@ Gtk::Widget& MainWindow::row(const std::string& title, const std::string& detail
     box->append(*text); box->append(control); return *box;
 }
 void MainWindow::build_ui() {
-    set_title("metuxa"); set_default_size(780, 850); set_size_request(620, 620);
+    set_title(std::string("metuxa v") + METUXA_VERSION); set_default_size(780, 850); set_size_request(620, 620);
     set_icon_name("dev.metuxa.Control");
     auto provider = Gtk::CssProvider::create(); provider->load_from_data(css);
     Gtk::StyleProvider::add_provider_for_display(Gdk::Display::get_default(), provider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     auto* brand = Gtk::make_managed<Gtk::Label>("metuxa"); brand->add_css_class("metuxa-brand");
     header_.pack_start(*brand); header_.set_show_title_buttons(true);
     auto* context = Gtk::make_managed<Gtk::Label>("Server control"); context->add_css_class("dim-label"); header_.set_title_widget(*context);
+    header_.pack_end(preferences_button_); preferences_button_.signal_clicked().connect([this] { stack_.set_visible_child("preferences"); });
     header_.pack_end(diagnostics_button_); diagnostics_button_.add_css_class("flat");
     diagnostics_button_.signal_clicked().connect(sigc::mem_fun(*this, &MainWindow::save_diagnostics));
     set_titlebar(header_);
@@ -104,7 +114,7 @@ void MainWindow::build_ui() {
     top->append(start_button_); hero->append(*top);
     auto* state = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 10);
     status_badge_.add_css_class("status-badge"); status_badge_.set_halign(Gtk::Align::START); state->append(status_badge_);
-    state->append(label("Pinned TLS • Encrypted media • No microphone", "setting-detail")); hero->append(*state);
+    state->append(label("Encrypted connection. Microphone off.", "setting-detail")); hero->append(*state);
     live_input_label_.set_xalign(0); live_input_label_.set_hexpand(true); live_input_label_.set_wrap(true);
     live_input_box_.append(live_input_label_); live_input_box_.append(live_input_); hero->append(live_input_box_);
     live_input_.property_active().signal_changed().connect([this] {
@@ -143,8 +153,8 @@ void MainWindow::build_ui() {
     auto* advanced = Gtk::make_managed<Gtk::Expander>("Advanced settings");
     auto* advanced_box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 0); advanced_box->add_css_class("setting-group");
     codec_.set_model(Gtk::StringList::create({"HEVC (recommended)", "H.264"})); advanced_box->append(row("Codec preference", "Software fallback may use H.264.", codec_));
-    spin(fps_, 24, 120, 1); advanced_box->append(row("Frame rate", "24–120 frames per second", fps_));
-    spin(bitrate_, 1000, 80000, 1000, 7); advanced_box->append(row("Maximum bitrate", "1,000–80,000 kbps per screen", bitrate_));
+    spin(fps_, 24, 120, 1); advanced_box->append(row("Frame rate", "24 to 120 frames per second", fps_));
+    spin(bitrate_, 1000, 80000, 1000, 7); advanced_box->append(row("Maximum bitrate", "1,000 to 80,000 kbps per screen", bitrate_));
     auto* dimensions = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
     spin(width_, 640, 3840, 2); spin(height_, 480, 2160, 2);
     dimensions->append(width_); dimensions->append(label("×")); dimensions->append(height_);
@@ -159,18 +169,45 @@ void MainWindow::build_ui() {
     auto* pairing_scroll = Gtk::make_managed<Gtk::ScrolledWindow>(); pairing_scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
     auto* pairing = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 20); pairing->set_margin_end(4);
     pairing->append(label("Pair your headset", "session-title"));
-    pairing->append(label("Open the metuxa Quest launcher on the same network. Choose this computer, compare its fingerprint, then enter the pairing code. Only someone with this session’s code can connect."));
+    pairing->append(label("Choose this computer in metuxa on your Quest. Open pairing below, then compare the codes on both screens."));
+    pair_open_button_.set_halign(Gtk::Align::START); pairing->append(pair_open_button_);
+    pair_status_.set_xalign(0); pair_status_.set_wrap(true); pairing->append(pair_status_);
+    pair_open_button_.signal_clicked().connect([this] {
+        if (!server_.pairing_command(pairing_open_ || !pairing_id_.empty() ? "PAIR_CLOSE" : "PAIR_OPEN")) pair_status_.set_text("Could not contact the server. Stop it and try again.");
+    });
+    pair_request_box_.add_css_class("session-panel");
+    pair_request_box_.append(label("Compare the code", "section-title"));
+    pair_digits_.add_css_class("pair-number"); pair_digits_.add_css_class("session-title"); pair_request_box_.append(pair_digits_);
+    pair_peer_.set_wrap(true); pair_request_box_.append(pair_peer_);
+    pair_request_box_.append(label("Approve only if every digit matches the code on your headset. Reject unexpected requests."));
+    pair_request_box_.append(pair_compared_);
+    auto* decisions = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 10);
+    decisions->append(pair_reject_); decisions->append(pair_accept_); pair_accept_.add_css_class("suggested-action");
+    pair_request_box_.append(*decisions); pairing->append(pair_request_box_); pair_request_box_.set_visible(false);
+    pair_compared_.signal_toggled().connect([this] { pair_accept_.set_sensitive(pair_compared_.get_active() && !pairing_id_.empty()); });
+    pair_accept_.signal_clicked().connect([this] {
+        if (pairing_id_.empty() || !pair_compared_.get_active() || std::chrono::steady_clock::now() >= pairing_deadline_) return;
+        if (server_.pairing_command("PAIR_ACCEPT " + pairing_id_)) { pair_accept_.set_sensitive(false); pair_reject_.set_sensitive(false); pair_status_.set_text("Waiting for the server to confirm…"); }
+    });
+    pair_reject_.signal_clicked().connect([this] {
+        if (!pairing_id_.empty()) server_.pairing_command("PAIR_REJECT " + pairing_id_);
+        reset_pairing_request(); pair_status_.set_text("Pairing rejected.");
+    });
+    auto* manual = Gtk::make_managed<Gtk::Expander>("Manual pairing (older clients)");
+    auto* manual_box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 14);
     auto& address = section("Computer address"); endpoints_.set_xalign(0); endpoints_.set_wrap(true); endpoints_.set_selectable(true); address.append(endpoints_);
     copy_endpoint_.set_halign(Gtk::Align::START); address.append(copy_endpoint_); pairing->append(address);
     auto& identity = section("TLS fingerprint · SHA-256"); fingerprint_.set_xalign(0); fingerprint_.set_wrap(true); fingerprint_.set_wrap_mode(Pango::WrapMode::CHAR);
     fingerprint_.set_max_width_chars(64); fingerprint_.set_selectable(true); fingerprint_.add_css_class("pair-number"); identity.append(fingerprint_);
-    copy_pin_.set_halign(Gtk::Align::START); identity.append(copy_pin_); pairing->append(identity);
+    copy_pin_.set_halign(Gtk::Align::START); identity.append(copy_pin_); manual_box->append(identity);
     auto& secret = section("Private pairing code");
     auto* secret_line = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
     pairing_code_.set_editable(false); pairing_code_.set_visibility(false); pairing_code_.set_hexpand(true); pairing_code_.add_css_class("pair-number");
-    secret_line->append(pairing_code_); secret_line->append(copy_code_); secret.append(*secret_line); secret.append(reveal_code_); pairing->append(secret);
-    pairing_hint_.set_xalign(0); pairing_hint_.set_wrap(true); pairing_hint_.add_css_class("permission-note"); pairing->append(pairing_hint_);
-    pairing->append(label("A new fingerprint and code are created every time the server starts. Do not publish the code or open these ports to the internet. Discovery is only a convenience, never proof of identity.", "setting-detail"));
+    secret_line->append(pairing_code_); secret_line->append(copy_code_); secret.append(*secret_line); secret.append(reveal_code_); manual_box->append(secret);
+    pairing_hint_.set_xalign(0); pairing_hint_.set_wrap(true); pairing_hint_.add_css_class("permission-note"); manual_box->append(pairing_hint_);
+    manual_box->append(label("Compare the entire fingerprint before entering the private code. Both change when the server restarts.", "setting-detail"));
+    manual->set_child(*manual_box); pairing->append(*manual);
+    pairing->append(label("Use your local network. Do not forward metuxa ports to the internet.", "setting-detail"));
     pairing_scroll->set_child(*pairing); stack_.add(*pairing_scroll, "pair", "Pair headset");
     copy_code_.signal_clicked().connect([this] { copy_text(code_, "Pairing code copied. Share it only with your headset."); });
     copy_pin_.signal_clicked().connect([this] { copy_text(pin_, "Fingerprint copied."); });
@@ -251,7 +288,7 @@ void MainWindow::apply_profile() {
     loading_ = false; settings_changed();
 }
 void MainWindow::start_server() {
-    if (server_.running()) return;
+    if (server_.running() || (update_job_ && update_job_->action == 3)) return;
     settings_ = read_widgets();
     auto executable = resolve_server();
     if (executable.empty()) {
@@ -263,7 +300,7 @@ void MainWindow::start_server() {
     else notice_.set_visible(false);
     save_timer_.disconnect(); startup_timer_.disconnect(); clear_security();
     streams_.clear(); input_available_.clear(); input_active_.clear(); audio_active_.clear(); diagnostic_events_.clear(); had_error_ = false;
-    set_status("Starting server…", "Waiting for metuxa to initialize. No connection is claimed yet.", "busy");
+    set_status("Starting server…", "Waiting for the server to start.", "busy");
     record_event("Starting");
     if (!server_.start(settings_.arguments(executable), error)) {
         set_status("Could not start", "Check Activity for details and verify the server build.", "error"); append_log(error); record_event("Launch failed"); update_actions(); return;
@@ -284,6 +321,41 @@ void MainWindow::stop_server() {
 void MainWindow::on_event(const std::string& line) {
     Event event; if (!parse_event(line, event)) { append_log("Ignored an invalid server status message."); return; }
     const auto type = event.get("type"), state = event.get("state");
+    if (type == "pairing_window") {
+        pairing_open_ = event.number("open") == 1;
+        pair_open_button_.set_label(pairing_open_ ? "Close pairing" : "Pair a headset");
+        if (pairing_open_) {
+            reset_pairing_request(); pairing_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(std::clamp(event.number("expires_seconds"), 1, 60));
+            pair_status_.set_text("Pairing is open for one minute. Select this computer on your headset.");
+        } else if (pairing_id_.empty()) pair_status_.set_text("Pairing is closed.");
+        return;
+    }
+    if (type == "pairing_request") {
+        const auto id = event.get("id"), digits = event.get("code"), peer = event.get("peer");
+        if (!hex_string(id, 32) || digits.size() != 11 || digits[5] != ' ' ||
+            digits.substr(0,5).find_first_not_of("0123456789") != std::string::npos || digits.substr(6).find_first_not_of("0123456789") != std::string::npos ||
+            peer.size() > 45 || peer.find_first_not_of("0123456789abcdefABCDEF.:") != std::string::npos) {
+            server_.pairing_command("PAIR_CLOSE"); reset_pairing_request(); return;
+        }
+        reset_pairing_request(); pairing_open_ = false; pairing_id_ = id;
+        pairing_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(std::clamp(event.number("expires_seconds"), 1, 60));
+        pair_digits_.set_text(digits); pair_peer_.set_text(peer.empty() ? "" : "Request from " + peer);
+        pair_request_box_.set_visible(true); pair_open_button_.set_label("Cancel pairing"); stack_.set_visible_child("pair");
+        pairing_timer_ = Glib::signal_timeout().connect([this] {
+            const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(pairing_deadline_ - std::chrono::steady_clock::now()).count();
+            if (remaining <= 0) { if (!pairing_id_.empty()) server_.pairing_command("PAIR_REJECT " + pairing_id_); reset_pairing_request(); pair_status_.set_text("Pairing expired. Open pairing to try again."); pair_open_button_.set_label("Pair a headset"); return false; }
+            pair_status_.set_text("Compare the code before approving. " + std::to_string(remaining) + " seconds left."); return true;
+        }, 500);
+        return;
+    }
+    if (type == "pairing_closed") {
+        if (!pairing_id_.empty() && event.get("id") != pairing_id_) return;
+        const auto reason = event.get("reason"); reset_pairing_request(); pairing_open_ = false; pair_open_button_.set_label("Pair a headset");
+        pair_status_.set_text(reason == "approved" ? "Headset approved. Connecting…" : reason == "rejected" ? "Pairing rejected." : reason == "expired" ? "Pairing expired. Open pairing to try again." : "Pairing ended. Open pairing to try again."); return;
+    }
+    if (type == "pairing_unavailable") {
+        pair_status_.set_text(event.get("reason") == "limit" ? "Pairing attempt limit reached. Restart the server to try again." : event.get("reason") == "busy" ? "A pairing request is already open." : "Wait a few seconds before opening pairing again."); return;
+    }
     if (type == "security") {
         const auto pin = event.get("fingerprint"), code = event.get("pairing_code");
         if (!hex_string(pin, 64) || !hex_string(code, 32)) { append_log("Invalid server pairing information; connection details withheld."); return; }
@@ -293,6 +365,7 @@ void MainWindow::on_event(const std::string& line) {
         std::string text; for (const auto& address : addresses) { if (!text.empty()) text += '\n'; text += address; }
         endpoints_.set_text(text.empty() ? "No active IPv4 network address found. Connect to the same network as your headset." : text);
         pairing_hint_.set_text("Compare the full fingerprint on the headset before pairing. This code authorizes only the current server session.");
+        pair_open_button_.set_sensitive(!server_.stopping()); pair_status_.set_text("Pairing is closed. Open it when your headset is ready.");
         copy_code_.set_sensitive(true); copy_pin_.set_sensitive(true); copy_endpoint_.set_sensitive(!primary_endpoint_.empty()); reveal_code_.set_sensitive(true);
     }
     const int monitor = event.number("monitor", -1);
@@ -311,11 +384,11 @@ void MainWindow::on_event(const std::string& line) {
     }
     if (server_.stopping()) return;
     if (state == "starting") set_status("Starting server…", "Initializing the private session.", "busy");
-    else if (state == "requesting_access") set_status("Choose what to share", "Approve or cancel the system capture dialog. Nothing is marked connected yet.", "busy");
+    else if (state == "requesting_access") set_status("Choose what to share", "Select a screen or window in the system dialog.", "busy");
     else if (state == "listening") {
         set_status("Ready for your headset", "The server is listening. Pair in the Quest launcher to connect.", "ready"); startup_timer_.disconnect(); notice_.set_visible(false);
     } else if (state == "connected") {
-        set_status("Headset connected", "An authenticated headset session is active. See Activity for negotiated capture details.", "ready"); startup_timer_.disconnect(); notice_.set_visible(false);
+        set_status("Headset connected", "Your headset is connected. Activity shows the active streams.", "ready"); startup_timer_.disconnect(); notice_.set_visible(false);
     } else if (state == "error") {
         had_error_ = true; set_status("The server needs attention", "Open Activity for details. Stop the session before changing settings.", "error");
         if (!event.get("message").empty()) append_log(event.get("message"));
@@ -339,6 +412,7 @@ void MainWindow::on_exit(int status, bool requested) {
 }
 void MainWindow::update_actions() {
     bool running = server_.running(), stopping = server_.stopping();
+    pair_open_button_.set_sensitive(running && !stopping && !pin_.empty()); update_controls();
     settings_box_.set_sensitive(!running); start_button_.set_sensitive(!stopping);
     start_button_.set_label(stopping ? "Stopping…" : running ? "Stop server" : "Start server");
     start_button_.remove_css_class("suggested-action"); start_button_.remove_css_class("destructive-action");
@@ -367,7 +441,7 @@ void MainWindow::append_log(const std::string& text) {
     if (!log_timer_.connected()) log_timer_ = Glib::signal_timeout().connect([this] {
         std::string content;
         for (const auto& entry : log_lines_) content += entry + '\n';
-        log_buffer_->set_text(content); auto mark = log_buffer_->get_insert(); log_view_.scroll_to(mark);
+        log_buffer_->set_text(content); auto mark = log_buffer_->get_insert(); if (preferences_.auto_scroll) log_view_.scroll_to(mark);
         return false;
     }, 100);
 }
@@ -386,6 +460,9 @@ void MainWindow::update_stream_summary() {
     stream_summary_.set_text(text.empty() ? "Waiting for the server to report capture and encoder details…" : text);
 }
 void MainWindow::clear_security() {
+    reset_pairing_request(); pairing_open_ = false;
+    pair_open_button_.set_label("Pair a headset"); pair_open_button_.set_sensitive(false);
+    pair_status_.set_text("Start the server before pairing.");
     pin_.clear(); std::fill(code_.begin(), code_.end(), '\0'); code_.clear(); primary_endpoint_.clear();
     pairing_code_.set_text(""); pairing_code_.set_placeholder_text("Available after Start"); fingerprint_.set_text("No active session"); endpoints_.set_text("Start the server to see connection addresses.");
     copy_code_.set_sensitive(false); copy_pin_.set_sensitive(false); copy_endpoint_.set_sensitive(false);
@@ -417,6 +494,10 @@ void MainWindow::save_diagnostics() {
     }, *this), dialogs_cancel_);
 }
 bool MainWindow::close_requested() {
+    save_app_preferences();
+    if (update_job_ && update_job_->action == 3 && !update_job_->done) {
+        update_status_.set_text("Finishing the update. Close metuxa when this completes."); stack_.set_visible_child("preferences"); return true;
+    }
     if (!server_.running()) {
         save_timer_.disconnect(); std::string error; save_settings(settings_path(), read_widgets(), error); return false;
     }

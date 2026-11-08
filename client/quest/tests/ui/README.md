@@ -33,14 +33,18 @@ image is installed.
 
 ## Coverage and output
 
-Four test cases cover:
+Twelve test cases cover:
 
 - Launcher layouts at 1200 × 1000, 480 × 1000, and 360 × 800 with 150% font.
 - Wide → narrow → wide resizing, minimum touch targets, label height and gaps.
 - Full remote, Keyboard only and View only presets and persisted effective state.
+- Dark/light/system settings, day/night changes and form retention through recreation.
+- Per-monitor rotation persistence and inverse Android touch/hover at four angles on the TextureView renderer. These tests do not decode video or prove rotated pixel output.
+- Overlay timing, pinned Controls handle, local focus release, return to remote typing and the fixed More menu.
+- Production StreamSession.stop with blocking test sockets: no close on the caller/UI thread, duplicate shutdown, and isolation from replacement sockets.
 - Forget cancellation, pointer-device information, diagnostics Reset/Close.
 - Toolbar callbacks, disabled keyboard state and visible fixed Disconnect at
-  800 px and 360 px/150% font, without a connected media session.
+  800 px and 360 px/150% font, without a connected media session. Native mouse cursor positions are stubbed by Robolectric, so the hover matrix test uses stylus-source coordinates.
 
 PNG renders are written to `client/quest/app/build/ui-qa/screenshots/`; JUnit
 reports are in the standard `app/build/reports/tests/testDebugUnitTest/` folder.
@@ -50,4 +54,4 @@ renders isolate the real component. All test addresses are reserved documentatio
 addresses and pairing fields stay empty. Generated renders are not checked in.
 
 Visually inspect the output when changing layout or styling. Passing this suite
-supplements, and does not replace, the headset checklist in `VALIDATION.md`.
+supplements, and does not replace, the [headset acceptance checklist](../../../../docs/MANUAL-TESTS.md).

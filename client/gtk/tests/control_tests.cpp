@@ -1,4 +1,5 @@
 #include "control_model.hpp"
+#include "app_preferences.hpp"
 #include "server_process.hpp"
 #include <glib.h>
 #include <algorithm>
@@ -83,6 +84,14 @@ int main(int argc, char** argv) {
     check(load_settings(path, warning) == Settings{} && !warning.empty(), "malformed settings fail safe");
     auto report = diagnostic_report(loaded, {"starting", "listening"});
     check(report.find(secret) == std::string::npos && report.find("Source: portal") != std::string::npos, "safe diagnostic fields");
+    auto prefs_path = std::string(dir) + "/metuxa/preferences.ini";
+    AppPreferences prefs; prefs.theme = "dark"; prefs.updates = "download"; prefs.check_hours = 6; prefs.text_percent = 125; prefs.auto_scroll = false;
+    check(save_preferences(prefs_path, prefs, warning), "save app preferences");
+    auto restored = load_preferences(prefs_path);
+    check(restored.theme == "dark" && restored.updates == "download" && restored.check_hours == 6 && restored.text_percent == 125 && !restored.auto_scroll, "persist appearance and update choices");
+    check(stat(prefs_path.c_str(), &st) == 0 && (st.st_mode & 0777) == 0600, "private app preferences");
+    prefs.theme = "invalid"; prefs.updates = "silent"; prefs.check_hours = -1; prefs.text_percent = 999; prefs.skipped_version = "bad\nversion"; prefs.normalize();
+    check(prefs.theme == "system" && prefs.updates == "notify" && prefs.check_hours == 24 && prefs.text_percent == 150 && prefs.skipped_version.empty(), "invalid preferences normalize safely");
     std::filesystem::remove_all(dir);
     const auto executable = self_path();
     int exited = 0, exit_status = 0, events = 0; bool requested = false; pid_t child_pid = 0;
@@ -96,6 +105,8 @@ int main(int argc, char** argv) {
     check(!server.start({executable, "--child", "normal"}, error), "reject double start");
     pump_until([&] { return events == 1 && child_pid > 0; });
     check(server.running(), "real child active");
+    check(!server.pairing_command("PAIR_ACCEPT nope") && !server.pairing_command("PAIR_OPEN\nPAIR_ACCEPT " + std::string(32, 'a')), "reject invalid pairing commands");
+    check(server.pairing_command("PAIR_OPEN") && server.pairing_command("PAIR_REJECT " + std::string(32, 'a')), "bounded pairing command pipe");
     server.stop(); server.stop(); check(server.stopping(), "idempotent stop");
     pump_until([&] { return exited == 1; });
     check(requested && !server.running() && kill(child_pid, 0) < 0, "child stopped and reaped");

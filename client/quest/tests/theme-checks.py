@@ -96,3 +96,16 @@ check("setAccessibilityHeading(true)" in ui, "Section heading semantics missing"
 check("setBackgroundTintList(null)" in ui and "edit.setBackgroundTintList(null)" in main,
       "Platform background tint may override the custom control palette")
 print(f"metuxa graphite theme: {checks} checks passed; minimum enabled text contrast {minimum:.2f}:1")
+
+# Light mode uses the same controls with a separate neutral resource palette.
+colors = {item.attrib["name"]: item.text for item in ET.parse(res / "values-notnight/colors.xml").getroot()}
+light_minimum = 21.0
+for surface in ("background", "panel", "field", "hover"):
+    for foreground in ("text", "muted", "error"):
+        ratio = contrast("quest_" + foreground, "quest_" + surface)
+        light_minimum = min(light_minimum, ratio)
+        check(ratio >= 4.5, f"Light {foreground}/{surface} contrast: {ratio:.2f}")
+check(contrast("quest_ink", "quest_accent") >= 4.5, "Light selected text contrast")
+check(contrast("quest_outline", "quest_field") >= 3, "Light field edge contrast")
+check("themedContext(base)" in main, "Launcher must apply saved theme before inflation")
+print(f"metuxa light theme: minimum enabled text contrast {light_minimum:.2f}:1")

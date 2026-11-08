@@ -27,7 +27,7 @@ void Settings::normalize() {
 }
 std::vector<std::string> Settings::arguments(const std::string& executable) const {
     auto s = *this; s.normalize();
-    std::vector<std::string> a{executable, "--status-fd", "3", "--source", s.source,
+    std::vector<std::string> a{executable, "--status-fd", "3", "--control-fd", "4", "--source", s.source,
         "--monitors", std::to_string(s.monitors), "--fps", std::to_string(s.fps),
         "--bitrate", std::to_string(s.bitrate), "--codec", s.codec,
         "--width", std::to_string(s.width), "--height", std::to_string(s.height),
@@ -52,7 +52,7 @@ bool parse_event(const std::string& line, Event& event) {
         if (JSON_NODE_HOLDS_OBJECT(node)) {
             event = {};
             auto* object = json_node_get_object(node);
-            static const char* strings[] = {"type", "state", "message", "reason", "fingerprint", "pairing_code", "endpoint", "codec", "encoder"};
+            static const char* strings[] = {"type", "state", "message", "reason", "fingerprint", "pairing_code", "endpoint", "codec", "encoder", "id", "code", "peer"};
             for (const auto* key : strings) {
                 auto* member = json_object_get_member(object, key);
                 if (member && JSON_NODE_HOLDS_VALUE(member) && json_node_get_value_type(member) == G_TYPE_STRING) {
@@ -60,7 +60,7 @@ bool parse_event(const std::string& line, Event& event) {
                     if (value && strlen(value) <= 1024) event.strings[key] = value;
                 }
             }
-            static const char* numbers[] = {"monitor", "width", "height", "fps", "bitrate", "input_available", "input_active", "audio_active", "port", "clients"};
+            static const char* numbers[] = {"monitor", "width", "height", "fps", "bitrate", "input_available", "input_active", "audio_active", "port", "clients", "expires_seconds", "open"};
             for (const auto* key : numbers) {
                 auto* member = json_object_get_member(object, key);
                 if (!member || !JSON_NODE_HOLDS_VALUE(member)) continue;

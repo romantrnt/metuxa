@@ -40,25 +40,47 @@ public final class MainActivity extends Activity {
     private LinearLayout hosts, columns, connectionCard, controlsCard;
     private Button scanButton, resumeButton, disconnectButton;
     private DiscoveryClient discovery;
-    private boolean scanned, applyingProfile;
-    private AlertDialog diagnosticsDialog;
+    private boolean scanned, applyingProfile, refreshingTheme;
+    private AlertDialog diagnosticsDialog, pairingDialog, updateDialog, settingsDialog;
+    private PairingClient pairing;
+    private UpdateManager updater;
+    private UpdateManager.Release availableUpdate;
+    private TextView updateStatus;
+    private Button installUpdate;
+    private int appliedTheme, appliedScale, appliedUiMode;
+    private static final class FormState {
+        String host, port, fingerprint, token;
+        boolean audio, autoConnect; int monitors;
+    }
+    @Override public Object onRetainNonConfigurationInstance() {
+        FormState state = new FormState(); state.host = host.getText().toString(); state.port = port.getText().toString();
+        state.fingerprint = fingerprint.getText().toString(); state.token = token.getText().toString();
+        state.audio = audio.isChecked(); state.autoConnect = autoConnect.isChecked(); state.monitors = monitorCount.getSelectedItemPosition(); return state;
+    }
+    @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(QuestUi.themedContext(base)); }
     @Override protected void onCreate(Bundle state) {
-        super.onCreate(state); settings = new AppSettings(this);
+        super.onCreate(state); settings = new AppSettings(this); updater = new UpdateManager(this);
+        appliedTheme = settings.theme(); appliedScale = settings.textScale(); appliedUiMode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         buildUi();
-        for (AppSettings.Profile p : settings.profiles()) if (p.endpoint.key().equals(settings.lastHost())) { selectProfile(p); break; }
-        if (state == null && !getIntent().getBooleanExtra("manage", false) && coordinator.current() == null && !settings.autoHost().isEmpty()) {
+        Object retained = getLastNonConfigurationInstance();
+        if (retained instanceof FormState) {
+            FormState form = (FormState) retained; host.setText(form.host); port.setText(form.port); fingerprint.setText(form.fingerprint); token.setText(form.token);
+            audio.setChecked(form.audio); autoConnect.setChecked(form.autoConnect); monitorCount.setSelection(form.monitors);
+        } else for (AppSettings.Profile p : settings.profiles()) if (p.endpoint.key().equals(settings.lastHost())) { selectProfile(p); break; }
+        if (state == null && retained == null && !getIntent().getBooleanExtra("manage", false) && coordinator.current() == null && !settings.autoHost().isEmpty()) {
             for (AppSettings.Profile p : settings.profiles()) if (p.endpoint.key().equals(settings.autoHost())) {
                 selectProfile(p); connect(); break;
             }
         }
     }
     private void buildUi() {
-        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(QuestUi.BACKGROUND);
+        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(QuestUi.color(this, R.color.quest_background));
         LinearLayout page = QuestUi.column(this); int margin = QuestUi.dp(this, 24); page.setPadding(margin, margin, margin, margin);
-        TextView brand = QuestUi.text(this, "metuxa", 38, QuestUi.TEXT); brand.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); brand.setLetterSpacing(-0.035f); brand.setAccessibilityHeading(true); page.addView(brand);
-        page.addView(QuestUi.text(this, "Your PC, in your space.", 17, QuestUi.MUTED)); QuestUi.space(page, 16);
-        sessionStatus = QuestUi.text(this, "", 14, QuestUi.ACCENT); sessionStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); page.addView(sessionStatus);
+        TextView brand = QuestUi.text(this, "metuxa", 38, QuestUi.color(this, R.color.quest_text)); brand.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); brand.setLetterSpacing(-0.035f); brand.setAccessibilityHeading(true); page.addView(brand);
+        page.addView(QuestUi.text(this, "PC monitors on your Quest", 17, QuestUi.color(this, R.color.quest_muted))); QuestUi.space(page, 12);
+        Button settingsButton = QuestUi.button(this, "Settings", false); page.addView(settingsButton); settingsButton.setOnClickListener(v -> showSettings()); QuestUi.space(page, 16);
+        sessionStatus = QuestUi.text(this, "", 14, QuestUi.color(this, R.color.quest_accent)); sessionStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); page.addView(sessionStatus);
         LinearLayout live = QuestUi.actions(this); resumeButton = QuestUi.button(this, "Return to screens", true); disconnectButton = QuestUi.button(this, "Disconnect all", false);
         live.addView(resumeButton); live.addView(disconnectButton); page.addView(live);
         resumeButton.setOnClickListener(v -> openScreens()); disconnectButton.setOnClickListener(v -> { coordinator.disconnect(); refreshSession(); });
@@ -69,35 +91,38 @@ public final class MainActivity extends Activity {
         LinearLayout connection = QuestUi.column(this), controls = QuestUi.column(this);
         connectionCard = connection; controlsCard = controls;
         int pad = QuestUi.dp(this, 20); connection.setPadding(pad, pad, pad, pad); controls.setPadding(pad, pad, pad, pad);
-        connection.setBackground(QuestUi.outlined(this, QuestUi.PANEL, 18, QuestUi.BORDER, 1)); controls.setBackground(QuestUi.outlined(this, QuestUi.PANEL, 18, QuestUi.BORDER, 1));
+        connection.setBackground(QuestUi.outlined(this, QuestUi.color(this, R.color.quest_panel), 18, QuestUi.color(this, R.color.quest_border), 1)); controls.setBackground(QuestUi.outlined(this, QuestUi.color(this, R.color.quest_panel), 18, QuestUi.color(this, R.color.quest_border), 1));
         LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(wide ? 0 : -1, -2, wide ? 1.15f : 0);
         LinearLayout.LayoutParams right = new LinearLayout.LayoutParams(wide ? 0 : -1, -2, wide ? 1f : 0);
         if (wide) right.leftMargin = QuestUi.dp(this, 16); else right.topMargin = QuestUi.dp(this, 16);
         columns.addView(connection, left); columns.addView(controls, right); page.addView(columns);
         QuestUi.heading(connection, "Connect to your PC");
-        connection.addView(QuestUi.text(this, "Start metuxa on the PC. Choose it here, then copy its fingerprint and pairing token.", 14, QuestUi.MUTED));
+        connection.addView(QuestUi.text(this, "Start metuxa on your PC and click Pair a headset. Select it here and choose Connect within 60 seconds. Compare the code on both screens, then confirm on both screens.", 14, QuestUi.color(this, R.color.quest_muted)));
         QuestUi.space(connection, 10);
         LinearLayout hostActions = QuestUi.actions(this);
         scanButton = QuestUi.button(this, "Find nearby PCs", false); hostActions.addView(scanButton); scanButton.setOnClickListener(v -> scan());
         Button saved = QuestUi.button(this, "Saved PCs", false); hostActions.addView(saved); saved.setOnClickListener(v -> showSaved()); connection.addView(hostActions); QuestUi.space(connection, 10);
-        discoveryStatus = QuestUi.text(this, "Discovery only suggests addresses. It does not verify a PC's identity.", 13, QuestUi.MUTED); connection.addView(discoveryStatus);
+        discoveryStatus = QuestUi.text(this, "Nearby PCs are unverified until you pair them.", 13, QuestUi.color(this, R.color.quest_muted)); connection.addView(discoveryStatus);
         hosts = QuestUi.column(this); connection.addView(hosts);
         host = field(connection, "PC address", "192.168.1.20 or hostname", false); host.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         port = field(connection, "Base port", "7878", false); port.setInputType(InputType.TYPE_CLASS_NUMBER); port.setText("7878");
-        fingerprint = field(connection, "Server SHA-256 fingerprint", "64 hex characters, from your PC", false);
+        Button manual = QuestUi.button(this, "Manual pairing details", false); connection.addView(manual);
+        LinearLayout manualFields = QuestUi.column(this); manualFields.setVisibility(View.GONE); connection.addView(manualFields);
+        manual.setOnClickListener(v -> manualFields.setVisibility(manualFields.getVisibility() == View.GONE ? View.VISIBLE : View.GONE));
+        fingerprint = field(manualFields, "Server SHA-256 fingerprint", "64 hex characters, from your PC", false);
         fingerprint.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
-        token = field(connection, "Pairing token", "32 hex characters, from your PC", true);
-        connection.addView(QuestUi.text(this, "Compare the fingerprint with the PC display. Tokens are stored encrypted on this headset. New server runs may require new pairing details.", 13, QuestUi.MUTED));
+        token = field(manualFields, "Pairing token", "32 hex characters, from your PC", true);
+        manualFields.addView(QuestUi.text(this, "Compare the fingerprint with the PC display. Tokens are stored encrypted on this headset. New server runs may require new pairing details.", 13, QuestUi.color(this, R.color.quest_muted)));
         QuestUi.space(connection, 10);
-        autoConnect = check(connection, "Connect to this saved PC when metuxa opens", false);
-        connection.addView(QuestUi.text(this, "Off by default. Reconnection during a session always stays on the same PC.", 13, QuestUi.MUTED));
+        autoConnect = check(manualFields, "Connect to this saved PC when metuxa opens", false);
+        manualFields.addView(QuestUi.text(this, "Off by default. Reconnection during a session always stays on the same PC.", 13, QuestUi.color(this, R.color.quest_muted)));
         QuestUi.space(connection, 16); LinearLayout actions = QuestUi.actions(this); Button connect = QuestUi.button(this, "Connect", true), save = QuestUi.button(this, "Save PC", false), forget = QuestUi.button(this, "Forget", false);
-        actions.addView(connect); actions.addView(save); actions.addView(forget); connection.addView(actions); QuestUi.space(connection, 12);
+        actions.addView(connect); actions.addView(forget); manualFields.addView(save, new LinearLayout.LayoutParams(-1, -2)); connection.addView(actions); QuestUi.space(connection, 12);
         connect.setOnClickListener(v -> connect()); save.setOnClickListener(v -> { if (saveSettings()) showStatus("PC and settings saved.", false); }); forget.setOnClickListener(v -> forget());
-        status = QuestUi.text(this, "Nothing connects until you choose Connect.", 13, QuestUi.MUTED); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); connection.addView(status);
+        status = QuestUi.text(this, "Choose a PC to connect.", 13, QuestUi.color(this, R.color.quest_muted)); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); connection.addView(status);
         QuestUi.heading(controls, "Remote input");
-        controls.addView(QuestUi.text(this, "Saved globally and applied immediately to every current and new window. Local launcher and toolbar controls always remain usable.", 14, QuestUi.MUTED));
-        QuestUi.space(controls, 12); presetStatus = QuestUi.text(this, "", 14, QuestUi.MUTED); controls.addView(presetStatus); QuestUi.space(controls, 10);
+        controls.addView(QuestUi.text(this, "These settings apply to every monitor. The app’s own controls stay available.", 14, QuestUi.color(this, R.color.quest_muted)));
+        QuestUi.space(controls, 12); presetStatus = QuestUi.text(this, "", 14, QuestUi.color(this, R.color.quest_muted)); controls.addView(presetStatus); QuestUi.space(controls, 10);
         LinearLayout presets = QuestUi.actions(this);
         String[] presetNames = { "Full remote", "Keyboard only", "View only" };
         for (int i = 0; i < presetNames.length; i++) {
@@ -115,9 +140,9 @@ public final class MainActivity extends Activity {
         clickInput.setOnCheckedChangeListener((b, checked) -> saveInputControls());
         scrollInput.setOnCheckedChangeListener((b, checked) -> saveInputControls());
         keyboardInput.setOnCheckedChangeListener((b, checked) -> saveInputControls());
-        controls.addView(QuestUi.text(this, "With movement off, clicks use the PC's existing cursor: no hidden position update is sent. Dragging requires movement. Changing input settings releases held input and cancels pending pasted text.", 13, QuestUi.MUTED));
+        controls.addView(QuestUi.text(this, "With movement off, clicks use the PC's existing cursor: no hidden position update is sent. Dragging requires movement. Changing input settings releases held input and cancels pending pasted text.", 13, QuestUi.color(this, R.color.quest_muted)));
         QuestUi.divider(controls); QuestUi.heading(controls, "Pointer device rules");
-        controls.addView(QuestUi.text(this, "Device rules affect pointer actions only. The keyboard has its own switch above.", 13, QuestUi.MUTED));
+        controls.addView(QuestUi.text(this, "Device rules affect pointer actions only. The keyboard has its own switch above.", 13, QuestUi.color(this, R.color.quest_muted)));
         pointerModes = new RadioGroup(this);
         String[] sourceModes = { "All pointer devices (unfiltered)", "Block all pointer devices",
             "Only selected physical pointer devices (experimental)", "All identifiable physical pointer devices except selected" };
@@ -130,33 +155,33 @@ public final class MainActivity extends Activity {
         Button devices = QuestUi.button(this, "Choose allowed pointer devices", false); controls.addView(devices, new LinearLayout.LayoutParams(-1, -2)); QuestUi.space(controls, 8); devices.setOnClickListener(v -> chooseDevices(false));
         Button excluded = QuestUi.button(this, "Choose excluded pointer devices", false); controls.addView(excluded, new LinearLayout.LayoutParams(-1, -2)); excluded.setOnClickListener(v -> chooseDevices(true));
         QuestUi.space(controls, 8);
-        controls.addView(QuestUi.text(this, "Both filtered modes block unknown, virtual or unidentified Android devices. An empty allowlist blocks every pointer; an empty exclusion list allows all identifiable non-virtual pointers. Unfiltered mode also permits unknown and virtual sources.", 13, QuestUi.MUTED));
-        controls.addView(QuestUi.text(this, "Quest Home may report hands and controllers as the same Android device. Names and descriptors are not proof of physical origin. These rules cannot promise hand-only filtering. Block all pointer devices to prevent every pointer source from controlling the PC; Home hand tracking itself stays on.", 13, QuestUi.MUTED));
+        controls.addView(QuestUi.text(this, "Both filtered modes block unknown, virtual or unidentified Android devices. An empty allowlist blocks every pointer; an empty exclusion list allows all identifiable non-virtual pointers. Unfiltered mode also permits unknown and virtual sources.", 13, QuestUi.color(this, R.color.quest_muted)));
+        controls.addView(QuestUi.text(this, "Quest Home may report hands and controllers as the same Android device. Names and descriptors are not proof of physical origin. These rules cannot promise hand-only filtering. Block all pointer devices to prevent every pointer source from controlling the PC; Home hand tracking itself stays on.", 13, QuestUi.color(this, R.color.quest_muted)));
         refreshInputControls();
         QuestUi.divider(controls); QuestUi.heading(controls, "Screens & sound");
         audio = check(controls, "Play PC audio in the main window", settings.audio());
-        controls.addView(QuestUi.text(this, "Only the main window plays audio. Server audio must also be enabled.", 13, QuestUi.MUTED));
-        QuestUi.space(controls, 12); TextView windowsLabel = QuestUi.text(this, "Windows to open", 14, QuestUi.TEXT); controls.addView(windowsLabel); QuestUi.space(controls, 6);
+        controls.addView(QuestUi.text(this, "Only the main window plays audio. Server audio must also be enabled.", 13, QuestUi.color(this, R.color.quest_muted)));
+        QuestUi.space(controls, 12); TextView windowsLabel = QuestUi.text(this, "Windows to open", 14, QuestUi.color(this, R.color.quest_text)); controls.addView(windowsLabel); QuestUi.space(controls, 6);
         monitorCount = new Spinner(this, Spinner.MODE_DROPDOWN); monitorCount.setId(View.generateViewId()); windowsLabel.setLabelFor(monitorCount.getId());
         ArrayAdapter<String> monitorAdapter = new ArrayAdapter<>(this, R.layout.quest_spinner_value, new String[] { "1 monitor", "2 monitors", "3 monitors" });
         monitorAdapter.setDropDownViewResource(R.layout.quest_spinner_option); monitorCount.setAdapter(monitorAdapter);
         monitorCount.setBackgroundTintList(null); monitorCount.setBackgroundResource(R.drawable.quest_spinner_background);
         monitorCount.setPopupBackgroundResource(R.drawable.quest_popup_background); monitorCount.setMinimumHeight(QuestUi.dp(this, 52));
         monitorCount.setSelection(settings.monitors() - 1); controls.addView(monitorCount, new LinearLayout.LayoutParams(-1, -2)); QuestUi.space(controls, 8);
-        controls.addView(QuestUi.text(this, "Sound and starting window count apply on the next connection. The toolbar can add or close available monitors.", 13, QuestUi.MUTED));
+        controls.addView(QuestUi.text(this, "Sound and starting window count apply on the next connection. The toolbar can add or close available monitors.", 13, QuestUi.color(this, R.color.quest_muted)));
         QuestUi.space(controls, 12); Button saveOptions = QuestUi.button(this, "Save screen settings", false); controls.addView(saveOptions, new LinearLayout.LayoutParams(-1, -2));
         saveOptions.setOnClickListener(v -> { settings.options(audio.isChecked(), monitorCount.getSelectedItemPosition() + 1, !settings.autoHost().isEmpty(), settings.autoHost()); showStatus("Screen settings saved for your next connection.", false); });
         QuestUi.divider(controls); QuestUi.heading(controls, "Input diagnostics");
         CheckBox diagnostics = check(controls, "Collect pointer metadata for this app session", coordinator.diagnostics.enabled());
         diagnostics.setOnCheckedChangeListener((b, checked) -> coordinator.diagnostics.setEnabled(checked));
-        controls.addView(QuestUi.text(this, "Off by default. Source, tool type, device ID, action, buttons and device identity metadata only. No coordinates, keyboard events, typed text, screenshots or saved files. Up to 80 samples in memory.", 13, QuestUi.MUTED));
+        controls.addView(QuestUi.text(this, "Keeps up to 80 pointer metadata samples in memory. It does not record positions, typing or screenshots.", 13, QuestUi.color(this, R.color.quest_muted)));
         QuestUi.space(controls, 12); Button inspect = QuestUi.button(this, "Inspect / reset metadata", false); controls.addView(inspect, new LinearLayout.LayoutParams(-1, -2)); inspect.setOnClickListener(v -> showDiagnostics());
-        QuestUi.space(page, 18); page.addView(QuestUi.text(this, "metuxa • Quest client • 0.2.0\nIndependent install from MetaShare. No capture or remote control starts on the PC from this launcher alone.", 13, QuestUi.MUTED));
+        QuestUi.space(page, 18); page.addView(QuestUi.text(this, getString(R.string.app_name), 13, QuestUi.color(this, R.color.quest_muted)));
         scroll.addView(page); setContentView(scroll);
     }
     private EditText field(LinearLayout parent, String label, String hint, boolean secret) {
-        QuestUi.space(parent, 16); TextView title = QuestUi.text(this, label, 14, QuestUi.TEXT); parent.addView(title); QuestUi.space(parent, 6);
-        EditText edit = new EditText(this); edit.setId(View.generateViewId()); title.setLabelFor(edit.getId()); edit.setSingleLine(true); edit.setTextColor(QuestUi.TEXT); edit.setHintTextColor(QuestUi.MUTED); edit.setTextSize(15); edit.setHint(hint);
+        QuestUi.space(parent, 16); TextView title = QuestUi.text(this, label, 14, QuestUi.color(this, R.color.quest_text)); parent.addView(title); QuestUi.space(parent, 6);
+        EditText edit = new EditText(this); edit.setId(View.generateViewId()); title.setLabelFor(edit.getId()); edit.setSingleLine(true); edit.setTextColor(QuestUi.color(this, R.color.quest_text)); edit.setHintTextColor(QuestUi.color(this, R.color.quest_muted)); edit.setTextSize(15); edit.setHint(hint);
         edit.setInputType(InputType.TYPE_CLASS_TEXT | (secret ? InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
         edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO); edit.setSaveEnabled(!secret); edit.setMinHeight(QuestUi.dp(this, 52));
         edit.setBackgroundTintList(null); edit.setBackgroundResource(R.drawable.quest_field_background);
@@ -183,7 +208,7 @@ public final class MainActivity extends Activity {
         AppSettings.Profile p = settings.find(endpoint);
         if (p != null) { selectProfile(p); return; }
         host.setText(endpoint.host); port.setText(Integer.toString(endpoint.port)); fingerprint.setText(""); token.setText(""); autoConnect.setChecked(false);
-        showStatus("Address selected. Enter pairing details from this PC.", false);
+        showStatus("PC selected. Choose Connect to pair.", false);
     }
     private void selectProfile(AppSettings.Profile profile) {
         host.setText(profile.endpoint.host); port.setText(Integer.toString(profile.endpoint.port)); fingerprint.setText(profile.pin);
@@ -192,7 +217,7 @@ public final class MainActivity extends Activity {
     }
     private void showSaved() {
         List<AppSettings.Profile> profiles = settings.profiles();
-        if (profiles.isEmpty()) { showStatus("No saved PCs yet. Enter pairing details and choose Save PC or Connect.", false); return; }
+        if (profiles.isEmpty()) { showStatus("No saved PCs yet. Open Manual pairing details to save a PC.", false); return; }
         String[] labels = new String[profiles.size()]; for (int i = 0; i < labels.length; i++) labels[i] = profiles.get(i).endpoint.key();
         new AlertDialog.Builder(this).setTitle("Saved PCs").setItems(labels, (dialog, which) -> selectProfile(profiles.get(which))).setNegativeButton("Cancel", null).show();
     }
@@ -206,10 +231,19 @@ public final class MainActivity extends Activity {
         return false;
     }
     private void connect() {
+        final HostEndpoint endpoint;
+        try { endpoint = HostEndpoint.parse(host.getText().toString(), port.getText().toString()); }
+        catch (IllegalArgumentException error) { showStatus(error.getMessage(), true); return; }
+        if (fingerprint.getText().toString().trim().isEmpty() && token.getText().toString().trim().isEmpty()) {
+            if (coordinator.current() != null) new AlertDialog.Builder(this).setTitle("Replace the current connection?")
+                .setMessage("All current screens will disconnect before pairing with " + endpoint.key() + ".")
+                .setPositiveButton("Continue", (d, w) -> { coordinator.disconnect(); beginPairing(endpoint); }).setNegativeButton("Cancel", null).show();
+            else beginPairing(endpoint);
+            return;
+        }
         if (!saveSettings()) return;
-        HostEndpoint endpoint = HostEndpoint.parse(host.getText().toString(), port.getText().toString());
         Runnable connect = () -> {
-            coordinator.connect(endpoint, HostEndpoint.fingerprint(fingerprint.getText().toString()), HostEndpoint.token(token.getText().toString()), audio.isChecked(), monitorCount.getSelectedItemPosition() + 1);
+            updater.cancel(); coordinator.connect(endpoint, HostEndpoint.fingerprint(fingerprint.getText().toString()), HostEndpoint.token(token.getText().toString()), audio.isChecked(), monitorCount.getSelectedItemPosition() + 1);
             openScreens(); refreshSession();
         };
         if (coordinator.current() != null) new AlertDialog.Builder(this).setTitle("Replace the current connection?")
@@ -217,7 +251,109 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("Reconnect", (d, w) -> connect.run()).setNegativeButton("Cancel", null).show();
         else connect.run();
     }
+    private void beginPairing(HostEndpoint endpoint) {
+        updater.cancel(); cancelPairing();
+        final PairingClient[] attempt = new PairingClient[1];
+        TextView code = QuestUi.text(this, "Connecting to " + endpoint.key() + "…", 20, QuestUi.color(this, R.color.quest_text));
+        int pad = QuestUi.dp(this, 24); code.setPadding(pad, pad, pad, pad);
+        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Pair with your PC").setView(code).setPositiveButton("Codes match", null).setNegativeButton("Cancel", null).create();
+        pairingDialog = dialog;
+        Runnable cancelThisAttempt = () -> { if (pairing == attempt[0] && pairingDialog == dialog) cancelPairing(); };
+        dialog.setOnCancelListener(d -> cancelThisAttempt.run()); dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> cancelThisAttempt.run());
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            if (pairing != attempt[0] || pairingDialog != dialog || pairing == null || isFinishing() || isDestroyed()) return;
+            attempt[0].confirm(); dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+            code.append("\n\nConfirmed here. Waiting for the PC…");
+        });
+        attempt[0] = new PairingClient(endpoint.host, endpoint.port, new PairingClient.Listener() {
+            private boolean current() { return pairing == attempt[0] && pairingDialog == dialog && !isFinishing() && !isDestroyed(); }
+            public void onCode(String value) { runOnUiThread(() -> { if (current()) { code.setText(value + "\n\nCompare every digit with the code on your PC. Confirm on both screens only if they match."); dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true); } }); }
+            public void onPaired(String pin, String secret) { runOnUiThread(() -> {
+                if (!current()) return; pairing = null; if (pairingDialog != null) { pairingDialog.dismiss(); pairingDialog = null; }
+                settings.options(audio.isChecked(), monitorCount.getSelectedItemPosition() + 1, false, "");
+                coordinator.connect(endpoint, pin, secret, settings.audio(), settings.monitors()); openScreens(); refreshSession();
+            }); }
+            public void onFailure(String message) { runOnUiThread(() -> {
+                if (!current()) return; pairing = null; if (pairingDialog != null) { pairingDialog.dismiss(); pairingDialog = null; }
+                showStatus(message, true);
+            }); }
+        });
+        pairing = attempt[0]; pairing.start();
+    }
+    private void cancelPairing() {
+        PairingClient old = pairing; pairing = null; if (old != null) old.cancel();
+        if (pairingDialog != null) { pairingDialog.dismiss(); pairingDialog = null; }
+    }
+    private void showSettings() {
+        if (settingsDialog != null && settingsDialog.isShowing()) return;
+        settingsDialog = new SettingsDialog(this, () -> {
+            settingsDialog = null; BaseStreamActivity.refreshAllSettings();
+            refreshTheme();
+        }, this::showInputSettings, this::showUpdates).show();
+    }
+    private boolean themeChanged() { return appliedTheme != settings.theme() || appliedScale != settings.textScale(); }
+    private boolean refreshTheme() {
+        if (!themeChanged()) return false;
+        if (!isDestroyed() && !isFinishing() && !refreshingTheme) { refreshingTheme = true; recreate(); }
+        return true;
+    }
+    private void showInputSettings() {
+        if (themeChanged()) { getIntent().putExtra("input_settings", true); refreshTheme(); return; }
+        controlsCard.post(() -> { if (!isDestroyed()) ((ScrollView) columns.getParent().getParent()).smoothScrollTo(0, controlsCard.getTop() + columns.getTop()); });
+    }
+    private void showUpdates() {
+        if (themeChanged()) { getIntent().putExtra("updates", true); refreshTheme(); return; }
+        if (updateDialog != null && updateDialog.isShowing()) return;
+        LinearLayout content = QuestUi.column(this); int pad = QuestUi.dp(this, 20); content.setPadding(pad, pad, pad, pad);
+        updateStatus = QuestUi.text(this, getString(R.string.app_name) + "\n" + UpdateManager.lastInstallStatus(this), 15, QuestUi.color(this, R.color.quest_text)); content.addView(updateStatus);
+        Button check = QuestUi.button(this, "Check now", false); content.addView(check); check.setOnClickListener(v -> checkUpdates(false));
+        installUpdate = QuestUi.button(this, "Download and install", true); content.addView(installUpdate); installUpdate.setEnabled(availableUpdate != null);
+        installUpdate.setOnClickListener(v -> installUpdate());
+        updateDialog = new AlertDialog.Builder(this).setTitle("Updates").setView(content).setPositiveButton("Close", null).create();
+        updateDialog.setOnDismissListener(d -> { updateDialog = null; updateStatus = null; installUpdate = null; }); updateDialog.show(); checkUpdates(false);
+    }
+    private UpdateManager.Listener updateListener() {
+        return new UpdateManager.Listener() {
+            public void onStatus(String text) { if (!isDestroyed()) { if (updateStatus != null) updateStatus.setText(text); else showStatus(text, false); } }
+            public void onError(String text) { if (!isDestroyed()) { if (updateStatus != null) updateStatus.setText(text); else showStatus(text, true); } }
+            public void onRelease(UpdateManager.Release release) {
+                if (isDestroyed()) return; availableUpdate = release;
+                if (installUpdate != null) installUpdate.setEnabled(true);
+                onStatus("Version " + release.version + " is available.");
+            }
+        };
+    }
+    private void checkUpdates(boolean automatic) {
+        if (automatic) {
+            long now = System.currentTimeMillis(), last = settings.preferences.getLong("last_update_check", 0);
+            if (!settings.autoCheckUpdates() || now - last >= 0 && now - last < 86400000L) return;
+            settings.preferences.edit().putLong("last_update_check", now).apply();
+        }
+        UpdateManager.Listener ui = updateListener();
+        updater.check(new UpdateManager.Listener() {
+            public void onStatus(String text) { ui.onStatus(text); }
+            public void onError(String text) { ui.onError(text); }
+            public void onRelease(UpdateManager.Release release) {
+                ui.onRelease(release);
+                if (automatic && settings.autoDownloadUpdates() && coordinator.current() == null && !isDestroyed()) updater.download(release, ui);
+            }
+        });
+    }
+    private void installUpdate() {
+        if (availableUpdate == null) return;
+        if (coordinator.current() != null) { updateStatus.setText("Disconnect your screens before installing an update."); return; }
+        if (updater.needsInstallPermission()) {
+            new AlertDialog.Builder(this).setTitle("Allow metuxa updates?").setMessage("In Android settings, allow metuxa to install updates. Then return here and choose Download and install.")
+                .setPositiveButton("Open Android settings", (d, w) -> updater.requestInstallPermission(this)).setNegativeButton("Cancel", null).show(); return;
+        }
+        new AlertDialog.Builder(this).setTitle("Install version " + availableUpdate.version + "?")
+            .setMessage("The download is verified before Android asks you to install it.")
+            .setPositiveButton("Download and install", (d, w) -> updater.downloadAndInstall(this, availableUpdate, updateListener())).setNegativeButton("Cancel", null).show();
+    }
     private void openScreens() {
+        updater.cancel();
         ConnectionCoordinator.Connection c = coordinator.current(); if (c == null) return;
         Intent intent = new Intent(this, StreamActivity.class); intent.putExtra("generation", c.generation); intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT); startActivity(intent);
     }
@@ -274,7 +410,7 @@ public final class MainActivity extends Activity {
             }).setNegativeButton("Cancel", null).show();
     }
     private void showDiagnostics() {
-        TextView content = QuestUi.text(this, diagnosticsSnapshot(), 12, QuestUi.TEXT); content.setTypeface(android.graphics.Typeface.MONOSPACE); content.setPadding(QuestUi.dp(this, 24), QuestUi.dp(this, 16), QuestUi.dp(this, 24), QuestUi.dp(this, 16));
+        TextView content = QuestUi.text(this, diagnosticsSnapshot(), 12, QuestUi.color(this, R.color.quest_text)); content.setTypeface(android.graphics.Typeface.MONOSPACE); content.setPadding(QuestUi.dp(this, 24), QuestUi.dp(this, 16), QuestUi.dp(this, 24), QuestUi.dp(this, 16));
         ScrollView scroller = new ScrollView(this); scroller.addView(content);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Pointer metadata only").setView(scroller).setPositiveButton("Close", null).setNeutralButton("Reset", null).create();
         Handler handler = new Handler(Looper.getMainLooper());
@@ -307,7 +443,7 @@ public final class MainActivity extends Activity {
         String clean = value.replaceAll("[\\p{Cntrl}\\p{Cf}]", "");
         return clean.substring(0, Math.min(clean.length(), maximum));
     }
-    private void showStatus(String text, boolean error) { if (status != null) { status.setText(text); status.setTextColor(error ? QuestUi.ERROR : QuestUi.MUTED); } }
+    private void showStatus(String text, boolean error) { if (status != null) { status.setText(text); status.setTextColor(error ? QuestUi.color(this, R.color.quest_error) : QuestUi.color(this, R.color.quest_muted)); } }
     private void refreshSession() {
         ConnectionCoordinator.Connection c = coordinator.current();
         sessionStatus.setText(c == null ? coordinator.lastStatus : (c.connected ? "Connected to " : "Session for ") + c.endpoint.key() + "\n" + coordinator.lastStatus);
@@ -316,6 +452,7 @@ public final class MainActivity extends Activity {
     }
     @Override public void onConfigurationChanged(android.content.res.Configuration config) {
         super.onConfigurationChanged(config);
+        if (settings.theme() == 2 && (config.uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) != appliedUiMode) { recreate(); return; }
         boolean wide = config.screenWidthDp >= 850;
         columns.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(wide ? 0 : -1, -2, wide ? 1.15f : 0);
@@ -323,6 +460,8 @@ public final class MainActivity extends Activity {
         if (wide) right.leftMargin = QuestUi.dp(this, 16); else right.topMargin = QuestUi.dp(this, 16);
         connectionCard.setLayoutParams(left); controlsCard.setLayoutParams(right);
     }
-    @Override protected void onResume() { super.onResume(); refreshSession(); if (!scanned) { scanned = true; scan(); } }
-    @Override protected void onStop() { if (diagnosticsDialog != null) diagnosticsDialog.dismiss(); if (discovery != null) { discovery.cancel(); discovery = null; scanButton.setEnabled(true); discoveryStatus.setText("Scan stopped. Choose Find nearby PCs to try again."); } super.onStop(); }
+    @Override protected void onResume() { super.onResume(); if (refreshTheme()) return; refreshSession(); checkUpdates(true); if (getIntent().getBooleanExtra("updates", false)) { getIntent().removeExtra("updates"); showUpdates(); } if (getIntent().getBooleanExtra("input_settings", false)) { getIntent().removeExtra("input_settings"); showInputSettings(); } if (!scanned && settings.discoverOnOpen()) { scanned = true; scan(); } }
+    @Override protected void onStop() { updater.cancel(); cancelPairing(); if (diagnosticsDialog != null) diagnosticsDialog.dismiss(); if (discovery != null) { discovery.cancel(); discovery = null; scanButton.setEnabled(true); discoveryStatus.setText("Scan stopped. Choose Find nearby PCs to try again."); } super.onStop(); }
+    @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); }
+    @Override protected void onDestroy() { cancelPairing(); if (updater != null) updater.close(); if (updateDialog != null) updateDialog.dismiss(); if (settingsDialog != null) { settingsDialog.setOnDismissListener(null); settingsDialog.dismiss(); } super.onDestroy(); }
 }
