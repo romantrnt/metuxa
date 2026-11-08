@@ -1,5 +1,6 @@
 #include "mutter_virtual_source.hpp"
 
+#include "pipewire_desktop_resize.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -64,29 +65,35 @@ void MutterVirtualSource::on_param_changed(const struct spa_pod* param) {
 
     const int w = info.info.raw.size.width;
     const int h = info.info.raw.size.height;
-    negotiated_fmt_ = spa_to_av(info.info.raw.format);
-    if (negotiated_fmt_ == AV_PIX_FMT_NONE) {
+    const int new_fmt = spa_to_av(info.info.raw.format);
+    if (new_fmt == AV_PIX_FMT_NONE || w < 1 || h < 1 || w > 8192 || h > 8192) {
         std::fprintf(stderr, "[mutter-source %d] unsupported SPA format %u\n",
                      monitor_idx_, info.info.raw.format);
-        return;
+        running_ = false; cv_.notify_all(); return;
     }
 
     {
         std::lock_guard<std::mutex> lk(mu_);
+        if (negotiated_fmt_ == new_fmt && fmt_.width == w && fmt_.height == h && front_ && back_)
+            goto reply_params;
+        negotiated_fmt_ = new_fmt;
         fmt_.width = w;
         fmt_.height = h;
+        have_new_ = false;
         for (AVFrame** f : {&front_, &back_}) {
             if (*f) av_frame_free(f);
             *f = av_frame_alloc();
+            if (!*f) { running_ = false; cv_.notify_all(); return; }
             (*f)->format = negotiated_fmt_;
             (*f)->width = w;
             (*f)->height = h;
-            av_frame_get_buffer(*f, 32);
+            if (av_frame_get_buffer(*f, 32) < 0) { running_ = false; cv_.notify_all(); return; }
         }
     }
     std::fprintf(stderr, "[mutter-source %d] negotiated %dx%d fmt=%d\n",
                  monitor_idx_, w, h, negotiated_fmt_);
 
+reply_params:;
     // Reply with buffer params: request CPU-mappable buffers.
     std::uint8_t buf[1024];
     struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
@@ -107,15 +114,22 @@ void MutterVirtualSource::on_process() {
     struct spa_buffer* sbuf = b->buffer;
     if (sbuf->n_datas >= 1 && sbuf->datas[0].data && negotiated_fmt_ >= 0) {
         std::lock_guard<std::mutex> lk(mu_);
-        if (back_) {
+        if (back_ && av_frame_make_writable(back_) >= 0) {
             const auto& d = sbuf->datas[0];
-            const int src_stride =
-                d.chunk->stride ? d.chunk->stride : back_->linesize[0];
-            const auto* src =
-                static_cast<const std::uint8_t*>(d.data) + d.chunk->offset;
-            av_image_copy_plane(
-                back_->data[0], back_->linesize[0], src, src_stride,
-                std::min(src_stride, back_->linesize[0]), back_->height);
+            if (!d.chunk || (d.chunk->flags & SPA_CHUNK_FLAG_CORRUPTED)) {
+                pw_stream_queue_buffer(stream_, b); return;
+            }
+            const std::size_t row_bytes = static_cast<std::size_t>(back_->width) * 4;
+            const int src_stride = d.chunk->stride ? d.chunk->stride : static_cast<int>(row_bytes);
+            if (src_stride < 0 || static_cast<std::size_t>(src_stride) < row_bytes ||
+                d.chunk->offset > d.maxsize || d.chunk->size > d.maxsize - d.chunk->offset) {
+                pw_stream_queue_buffer(stream_, b); return;
+            }
+            const std::uint64_t required = static_cast<std::uint64_t>(back_->height - 1) * src_stride + row_bytes;
+            if (required > d.chunk->size) { pw_stream_queue_buffer(stream_, b); return; }
+            const auto* src = static_cast<const std::uint8_t*>(d.data) + d.chunk->offset;
+            av_image_copy_plane(back_->data[0], back_->linesize[0], src,
+                                src_stride, static_cast<int>(row_bytes), back_->height);
             const auto now =
                 std::chrono::steady_clock::now().time_since_epoch();
             pts_usec_ =
@@ -231,9 +245,9 @@ bool MutterVirtualSource::start(std::string& err) {
     running_ = true;
 
     // Wait (briefly) for format negotiation so format() is valid on return.
-    for (int i = 0; i < 200 && fmt_.width == 0; ++i)
+    for (int i = 0; i < 200 && format().width == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    if (fmt_.width == 0) {
+    if (format().width == 0) {
         err = "timed out waiting for PipeWire format negotiation on monitor " +
               std::to_string(monitor_idx_);
         return false;
@@ -311,6 +325,25 @@ int MutterVirtualSource::deliver_front_locked(AVFrame** out,
     *out = out_;
     pts_usec = pts_usec_;
     return 1;
+}
+
+bool MutterVirtualSource::resize_desktop(int width, int height, std::string& err) {
+    if (!can_set_orientation() || !display::valid_size(width, height)) {
+        err = "Desktop orientation requires an owned virtual monitor with supported dimensions";
+        return false;
+    }
+    if (!running_ || !loop_) { err = "Virtual monitor is no longer active"; return false; }
+    pw_thread_loop_lock(loop_);
+    { std::lock_guard lock(mu_); have_new_ = false; }
+    const bool submitted = request_desktop_size(stream_, width, height, fps_hint_);
+    pw_thread_loop_unlock(loop_);
+    if (!submitted) { err = "PipeWire rejected the virtual monitor dimensions"; return false; }
+    std::unique_lock lock(mu_);
+    const bool ready = cv_.wait_for(lock, std::chrono::milliseconds(1500), [&] {
+        return !running_ || (have_new_ && front_ && front_->width == width && front_->height == height);
+    });
+    if (!ready || !running_) { err = "Virtual monitor did not produce the requested desktop dimensions"; return false; }
+    return true;
 }
 
 }  // namespace metashare

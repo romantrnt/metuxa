@@ -47,7 +47,14 @@ Real headset and compositor behavior still requires device testing.
   race check, so a GUI crash cannot leave its capture process alive. Normal close
   first asks whether to stop sharing and waits for exit.
 
-Appearance and update preferences are available in **Settings**. Update checks
+Appearance and update preferences are available in **Settings**. **System** reads
+the desktop Settings portal's color-scheme preference and follows changes while
+the app is open, including in the AppImage. When the portal has no preference or
+is unavailable, it uses GNOME's color-scheme setting if available, then GTK's
+native default. **Dark**, **Light** and **High contrast** remain explicit overrides.
+Returning to **System** uses the current desktop preference.
+
+Update checks
 and downloads are opt-in; installation is explicit and requires sharing to stop.
 See [Updates](../../docs/UPDATES.md) for signatures and AppImage replacement.
 
@@ -85,6 +92,11 @@ uses no real server, network, capture, input, or user configuration. It verifies
 bounded pipes, malformed settings, failure exit, repeated Start/Stop, forced
 shutdown, stale timer cancellation, destructor cleanup, and abrupt-parent death.
 
+`meson test -C build metuxa-appearance --print-errorlogs` tests appearance reads,
+legacy nested portal variants, runtime signals, service restarts, stale replies,
+GNOME fallback and callback teardown on a private D-Bus with in-memory settings.
+It does not read or change the user's desktop preferences.
+
 For headless UI integration, build the `metuxa-ui-tests` target, then run:
 
 ```sh
@@ -95,7 +107,7 @@ client/gtk/tests/run-isolated-ui.sh \
 This requires an already installed Weston and dbus-run-session. It creates a
 private headless Wayland compositor, an activation-free D-Bus session, and
 new temporary XDG directories. It never uses the user's session and only launches
-its own synthetic mock child. It checks source/preset changes, capability-driven
+its own synthetic mock child. It checks live System theme changes and explicit overrides, source/preset changes, capability-driven
 UI, private pairing, live input gates, cancel-close, and stop-close. Optional PNGs
 contain documentation-only addresses and synthetic, hidden credentials.
 

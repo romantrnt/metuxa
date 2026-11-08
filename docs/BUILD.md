@@ -52,6 +52,20 @@ meson test -C build-sanitize --print-errorlogs
 
 [GTK UI tests](../client/gtk/README.md#build-and-tests) require a private headless Weston and D-Bus session. [Android View tests](../client/quest/tests/ui/README.md) use Robolectric and need no emulator or headset. `scripts/lint.sh` requires clang-format, clang-tidy and dependencies for both native capture backends.
 
+The optional real-Mutter orientation regression creates a private headless
+compositor and PipeWire session. It masks the user's home, runtime sockets and
+hardware devices and disables networking. With Mutter, PipeWire, WirePlumber,
+bubblewrap, GIO and D-Bus already installed, build with `-Dmutter=enabled`, then:
+
+```sh
+meson compile -C build mutter-orientation-test
+bash tests/run-isolated-mutter.sh "$PWD/build/tests/mutter-orientation-test"
+```
+
+This checks real virtual-monitor mode changes and session cleanup, without
+capturing the user's desktop. It does not validate the portal picker, a physical
+Quest, or Horizon window behavior.
+
 Synthetic streaming tests use a separate network namespace, software encoding, test-pattern/test-tone sources, and no access to the user's display, session bus or PipeWire devices. They do not establish real portal, GPU or Quest behavior. Current results are in [Verification](VERIFICATION.md); physical-device checks are in [Manual tests](MANUAL-TESTS.md).
 
 ## Release packaging

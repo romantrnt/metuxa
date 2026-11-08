@@ -27,6 +27,8 @@ public final class StreamSession {
         default void onConnected() {}
         default void onDisconnected() {}
         default void onInputCapability(boolean available) {}
+        default void onDisplayCapability(String source, boolean supported) {}
+        default void onDisplayResult(String result, int width, int height) {}
     }
     private final RemoteSurfaceView surfaceView;
     private final int monitorIndex;
@@ -41,6 +43,8 @@ public final class StreamSession {
     private String host,fingerprint,pairingToken;
     private int basePort;
     private boolean audioEnabled;
+    private final DesktopOrientation orientation = new DesktopOrientation();
+    private boolean explicitReconnect;
 
     public StreamSession(Context context,RemoteSurfaceView surfaceView,int monitorIndex,Listener listener) {
         this.surfaceView=surfaceView; this.monitorIndex=monitorIndex; this.listener=listener;
@@ -62,10 +66,15 @@ public final class StreamSession {
     }
     public synchronized void stop() {
         running=false;
+        orientation.close();
         inputQueue.close();
         SocketShutdown closing=signalingSocket;
         if(closing!=null) closing.request(); // TLS close can write; never perform it on the UI thread.
         if(worker!=null) worker.interrupt();
+    }
+    public synchronized boolean requestOrientation(boolean portrait) {
+        if (!running || !orientation.request(portrait)) return false;
+        inputQueue.releaseAll(); return true;
     }
     public void sendPointerMove(float x,float y) {
         if(!Float.isFinite(x) || !Float.isFinite(y)) return;
@@ -76,7 +85,7 @@ public final class StreamSession {
     public void sendKey(int keysym,boolean pressed) { enqueueInput("k "+keysym+(pressed?" 1":" 0")); }
     /** Invalidates old unclaimed input; release follows any already-claimed write. */
     public void releaseAllInput() { inputQueue.releaseAll(); }
-    private void enqueueInput(String body) { inputQueue.offer(body); }
+    private synchronized void enqueueInput(String body) { if (!orientation.pending()) inputQueue.offer(body); }
     private void runLoop() {
         boolean ownsMonitor=false;
         try {
@@ -87,6 +96,7 @@ public final class StreamSession {
             ownsMonitor=true;
             int retry=0;
             while(running) {
+                explicitReconnect=false;
                 try {
                     postStatus("Connecting securely to "+host+"…");
                     InetAddress address=InetAddress.getByName(host);
@@ -102,10 +112,10 @@ public final class StreamSession {
                     Log.w(TAG,"Secure session ended ("+failure.getClass().getSimpleName()+")");
                     if(running && settings.reconnect()) postStatus("Disconnected. Retrying the selected server…");
                 } finally { closeSignalingSocket(); }
-                if(running && !settings.reconnect()) {
+                if(running && !settings.reconnect() && !explicitReconnect) {
                     postStatus("Connection closed. Choose Connect to try again."); running=false;
                 }
-                if(running) {
+                if(running && !explicitReconnect) {
                     try { Thread.sleep(Math.min(5000,1000+(retry++)*500L)); }
                     catch(InterruptedException e) { Thread.currentThread().interrupt(); break; }
                 }
@@ -159,6 +169,10 @@ public final class StreamSession {
             int videoClock=video.getInt("clock");
             if((!"h264".equals(codec) && !"h265".equals(codec)) || width<16 || width>8192 || height<16 || height>8192 || videoPt<96 || videoPt>127 || videoClock!=90000)
                 throw new IOException("Invalid video format");
+            JSONObject display=hello.optJSONObject("display");
+            final String source=display==null?"unknown":display.optString("source","unknown");
+            final boolean canOrient=display!=null && "virtual".equals(source) && display.optBoolean("orientation",false);
+            main.post(()->{ listener.onStreamSize(width,height); listener.onDisplayCapability(source,canOrient); });
             int audioSsrc=-1,audioPt=-1,audioClock=48000;
             if(audioEnabled && hello.has("audio")) {
                 JSONObject audio=hello.getJSONObject("audio");
@@ -176,7 +190,7 @@ public final class StreamSession {
             if(surface==null || !surface.isValid()) throw new IOException("Render surface unavailable");
             decoder.init(surface,codec,width,height,new VideoDecoder.Listener() {
                 @Override public void onFirstFrameRendered() { postStatus(""); }
-                @Override public void onFrameResolutionChanged(int w,int h) { main.post(()->listener.onStreamSize(w,h)); }
+                @Override public void onFrameResolutionChanged(int w,int h) { main.post(()->{ if(sessionActive.get()) listener.onStreamSize(w,h); }); }
             });
             final VideoDecoder activeVideo=decoder;
             final AudioDecoder activeAudio=audioDecoder;
@@ -191,6 +205,7 @@ public final class StreamSession {
             synchronized(this) {
                 if(!running) return;
                 inputSession=inputQueue.open(canInput);
+                orientation.open(source,canOrient);
             }
             main.post(()->{ listener.onInputCapability(canInput); listener.onConnected(); });
             receiver.requestKeyframe();
@@ -212,9 +227,21 @@ public final class StreamSession {
                 catch(IOException disconnected) { socketShutdown.request(); }
             },"MetuxaInput-"+monitorIndex);
             inputSender.start();
-            socket.setSoTimeout(3000);
-            long lastHeartbeat=System.nanoTime();
+            socket.setSoTimeout(500);
+            long lastHeartbeat=System.nanoTime(),lastPing=lastHeartbeat;
             while(running) {
+                long now=System.nanoTime();
+                String command=orientation.claim(now);
+                if(command!=null) synchronized(writeLock) {
+                    explicitReconnect=true; // A lost reply still requires learning the resulting desktop size.
+                    // Release before changing desktop geometry, even in view-only mode.
+                    sendLine(sigOut,"INPUT r"); sendLine(sigOut,command);
+                }
+                if(orientation.expired(now)) {
+                    explicitReconnect=true;
+                    main.post(()->listener.onDisplayResult("timeout",0,0));
+                    break; // Reconnect to learn the actual state; never replay a command.
+                }
                 try {
                     String line=sigIn.readLine();
                     if(line==null || "BYE".equals(line)) break;
@@ -222,15 +249,22 @@ public final class StreamSession {
                         final boolean available=line.endsWith("true");
                         boolean changed=inputQueue.setEnabled(inputSession,available);
                         if(changed) main.post(()->listener.onInputCapability(available));
+                    } else if(line.startsWith("DISPLAY_RESULT ")) {
+                        if(!orientation.awaitingResult()) throw new IOException("Unsolicited display result");
+                        if(handleDisplayResult(DesktopOrientation.parse(line))) break;
                     } else if(!"PING".equals(line)) throw new IOException("Unexpected control message");
                     lastHeartbeat=System.nanoTime();
                 } catch(SocketTimeoutException idle) {
                     if(System.nanoTime()-lastHeartbeat>10_000_000_000L) throw new IOException("Server heartbeat timed out");
-                    synchronized(writeLock) { sendLine(sigOut,"PING"); }
+                    if(System.nanoTime()-lastPing>=3_000_000_000L) {
+                        synchronized(writeLock) { sendLine(sigOut,"PING"); }
+                        lastPing=System.nanoTime();
+                    }
                 }
             }
         } finally {
             sessionActive.set(false);
+            orientation.close();
             inputQueue.close();
             closeSignalingSocket(); // unblocks writes before joining the sender
             if(inputSender!=null) {
@@ -246,6 +280,17 @@ public final class StreamSession {
             if(audioDecoder!=null) try { audioDecoder.release(); } catch(Exception ignored) {}
             main.post(()->{ listener.onInputCapability(false); listener.onDisconnected(); });
         }
+    }
+    private boolean handleDisplayResult(DesktopOrientation.Result result) {
+        orientation.complete();
+        main.post(()->listener.onDisplayResult(result.status,result.width,result.height));
+        if("restart_required".equals(result.status)) {
+            inputQueue.close(); explicitReconnect=false; running=false; return true;
+        }
+        if("ok".equals(result.status) || "failed".equals(result.status)) {
+            inputQueue.close(); explicitReconnect=true; return true;
+        }
+        explicitReconnect=false; return false;
     }
     private static void sendLine(OutputStream output,String line) throws IOException {
         if(line.length()>4096 || line.indexOf('\n')>=0 || line.indexOf('\r')>=0) throw new IOException("Invalid outgoing control message");

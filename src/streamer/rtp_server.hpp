@@ -19,6 +19,7 @@
 #include <netinet/in.h>
 
 #include "input_event.hpp"
+#include "display_control.hpp"
 #include "pacer.hpp"
 #include "protocol.hpp"
 #include "rtp_packetizer.hpp"
@@ -60,6 +61,14 @@ class RtpServer {
     // Format must be set before start() — it picks the packetizer and feeds
     // the HELLO JSON.
     void set_video_format(const VideoFormat& v) { video_ = v; }
+    void set_display_source(display::Source source, bool orientation) {
+        display_source_ = source;
+        orientation_enabled_ = source == display::Source::Virtual && orientation;
+    }
+    // Called only while this monitor is paused for an orientation request.
+    void update_display_format(const VideoFormat& v);
+    void fail_display() { display_failed_ = true; }
+    std::function<bool(bool portrait)> on_display_orientation;
     void set_audio_format(int sample_rate, int channels) {
         audio_rate_ = sample_rate;
         audio_channels_ = channels;
@@ -129,6 +138,11 @@ class RtpServer {
     signal::Server signaling_;
     Pacer* pacer_ = nullptr;
     VideoFormat video_{};
+    display::Source display_source_ = display::Source::Unknown;
+    bool orientation_enabled_ = false;
+    bool display_reconnect_ = false; // peer_mu_; media/input paused until reconnect
+    std::atomic<bool> display_failed_{false};
+    std::chrono::steady_clock::time_point last_orientation_{};
     int audio_rate_ = 48000;
     int audio_channels_ = 2;
 

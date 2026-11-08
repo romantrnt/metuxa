@@ -197,7 +197,7 @@ void Server::client_loop(int fd,const sockaddr_in& peer,const OnConnect& on_conn
             if(now-window>=std::chrono::seconds(1)) { window=now; messages=0; }
             if(++messages>1000) break;
             Message msg{};
-            if(!parse(line,msg) || (msg.type!=Type::kReady && msg.type!=Type::kInput && msg.type!=Type::kPing && msg.type!=Type::kBye)) break;
+            if(!parse(line,msg) || (msg.type!=Type::kReady && msg.type!=Type::kInput && msg.type!=Type::kDisplayOrientation && msg.type!=Type::kPing && msg.type!=Type::kBye)) break;
             if(on_message) on_message(msg);
             if(msg.type==Type::kBye) break;
         }

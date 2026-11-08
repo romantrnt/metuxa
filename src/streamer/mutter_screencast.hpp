@@ -2,9 +2,9 @@
 //
 // Talks directly to `org.gnome.Mutter.ScreenCast` over the session D-Bus,
 // bypassing xdg-desktop-portal entirely. This is what gnome-remote-desktop uses
-// under the hood. The win over the portal path: no user dialog, fully
-// programmatic, and we can *create* virtual monitor space (the portal can only
-// capture existing physical monitors).
+// under the hood. The direct API is experimental and depends on compositor
+// policy. Normal user sessions use the portal VIRTUAL source, which also
+// creates session-owned virtual monitor space with explicit user consent.
 //
 // GNOME 44+ flow: Mutter removed `OpenPipeWireRemote` in 44, so after
 // `session.Start()` each stream emits `PipeWireStreamAdded(node_id)` and we
@@ -27,6 +27,7 @@
 
 namespace sdbus {
 class IConnection;
+class IProxy;
 }
 
 namespace metashare {
@@ -39,9 +40,8 @@ class MutterScreenCastSession {
     MutterScreenCastSession(const MutterScreenCastSession&) = delete;
     MutterScreenCastSession& operator=(const MutterScreenCastSession&) = delete;
 
-    // Connect to the session D-Bus, read the Mutter ScreenCast API version,
-    // and call CreateSession. Returns false + sets err on any failure
-    // (e.g. not running under Mutter/GNOME, or API version too old).
+    // Connect to the session D-Bus and call CreateSession. Returns false
+    // and sets err when the compositor or its policy rejects the call.
     bool open(std::string& err);
 
     // Add a virtual monitor of the given size. Must be called between open()
@@ -71,6 +71,8 @@ class MutterScreenCastSession {
     std::unique_ptr<sdbus::IConnection> conn_;
     std::string session_path_;
     std::vector<MonitorInfo> monitors_;
+    // Signal subscriptions must survive until the connection event loop stops.
+    std::vector<std::unique_ptr<sdbus::IProxy>> stream_proxies_;
     std::mutex mu_;
     std::atomic<int> pending_count_{0};
     bool open_ = false;

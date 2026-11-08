@@ -106,6 +106,62 @@ in View only or with every pointer source blocked.
 - A destroyed rendering surface stops its media session. A new surface starts a
   new stream to the same selected PC. Old callbacks cannot mutate the replacement.
 
+## Desktop orientation and Horizon panel size
+
+**Display** in a monitor toolbar opens source information or the orientation
+selector. A physical monitor is mirrored exactly as the PC presents it. It has
+no independent rotation control in metuxa. A shared application window follows
+that window's shape. Use an added virtual monitor for a portrait desktop while
+keeping the laptop's physical screen landscape.
+
+A server that advertises orientation support for its own virtual monitor can
+switch that desktop between **Landscape** and **Portrait**. The compositor
+changes the virtual display dimensions, so applications reflow normally. The
+client does not tilt the decoded picture. Local image-rotation preferences from
+v0.3.0 are ignored, including for physical monitors.
+
+Changing a virtual desktop briefly pauses input and media, then reconnects that
+monitor to the same authenticated endpoint with fresh media keys and decoder
+configuration. A failed or timed-out request also reconnects to learn the actual
+size; it never replays the orientation command. This explicit reconnect still
+runs when automatic reconnect is disabled. If the PC reports that the virtual display could not be restored, this monitor
+stops retrying and asks you to restart sharing on the PC, then pair again.
+Older servers or unsupported sources
+show an explanation instead of sending a command. Changes to a physical display
+on the PC during sharing require restarting sharing to renegotiate capture.
+
+All Activities declare a resizable **1280 × 720 dp landscape** initial panel.
+The primary stream opens in its own task. Before its first launch for a
+connection, a bounded pinned-TLS probe reads authenticated HELLO dimensions and
+closes completely on a background thread. It never sends READY, starts media,
+or forwards input. The new stream task then requests bounds with that aspect
+ratio and establishes a separate authenticated connection with fresh media keys.
+Return to an already-open stream never probes its active connection. DNS,
+connection and socket-read budgets are 1.5 seconds; cancellation is requested
+after 6 seconds. Completion still waits for background TLS close, so 6 seconds
+is not a guaranteed end-to-end limit.
+
+If metadata cannot be read, launch uses the saved dimensions for that PC and
+monitor, or 16:9 when none are saved. The normal stream still authenticates and
+reports connection errors; a sizing failure never weakens trust. Secondary
+panels use saved/default launch dimensions. Each validated stream size updates
+the requested Android portrait/landscape orientation and aspect-preserving video
+fit. Leaving the launcher cancels the probe; stale results cannot open a panel
+for a replaced connection.
+
+These are window-manager requests. Horizon can restore an earlier panel size or
+ignore launch bounds and orientation hints; exact resizing of an already-open
+panel is not guaranteed by these public APIs. Use Home's panel resize controls
+when needed. The image remains upright and letterboxed without stretching.
+The manifest follows Meta's [initial window size guidance](https://developers.meta.com/vr/documentation/android-apps/port-an-existing-app/)
+and [resizable layout guidance](https://developers.meta.com/vr/documentation/android-apps/gaze-app-config/).
+Android documents the limits of [ActivityOptions.setLaunchBounds](https://developer.android.com/reference/android/app/ActivityOptions#setLaunchBounds(android.graphics.Rect)).
+
+The launcher keeps the graphite palette, with native switch rows and compact
+settings menus. **Pointer device rules** and **Input diagnostics** expand in
+place. **More** and **Disconnect** stay reachable on narrow stream panels; the toolbar
+collapses before cutting off an action label.
+
 ## Opt-in input diagnostics
 
 Collection starts **off** for every app process. The inspection view shows only:

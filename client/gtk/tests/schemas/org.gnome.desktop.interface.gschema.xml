@@ -1,0 +1,6 @@
+<schemalist>
+  <!-- Private, in-memory fixture. Never installed or written to dconf. -->
+  <schema id="org.gnome.desktop.interface" path="/org/gnome/desktop/interface/">
+    <key name="color-scheme" type="s"><default>'default'</default></key>
+  </schema>
+</schemalist>

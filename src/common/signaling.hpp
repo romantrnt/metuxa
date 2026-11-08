@@ -9,6 +9,9 @@
 //   START              server -> client: media may begin
 //   INPUT <event>      client -> server: bounded input event; "r" releases all
 //   INPUT_STATE bool   server -> client: current input gate, true or false
+//   DISPLAY_ORIENTATION portrait|landscape  client -> server, owned virtual only
+//   DISPLAY_RESULT ok W H|unsupported|busy|failed|restart_required  server -> client
+//                      reconnect this monitor after ok/failed (see docs/ORIENTATION.md)
 //   PING               client heartbeat, echoed by server with current state
 //   BYE                either side: close the authenticated session
 //
@@ -28,7 +31,7 @@ inline constexpr std::uint16_t kDefaultSignalingPort = 7878;
 // One decoded signaling message. PING is a client->server keepalive so the
 // server can distinguish an idle-but-alive client from a vanished one (and
 // free the single per-monitor slot for reconnection).
-enum class Type { kHello, kReady, kStart, kBye, kPing, kInput, kInputState };
+enum class Type { kHello, kReady, kStart, kBye, kPing, kInput, kInputState, kDisplayOrientation, kDisplayResult };
 
 struct Message {
     Type type;

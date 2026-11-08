@@ -43,7 +43,7 @@ void MainWindow::build_preferences() {
     box->append(updates);
     auto& privacy = section("Privacy and connection");
     privacy.append(label("Sharing starts only when you press Start server. Remote control starts off each time you open metuxa. Pairing approval expires after one minute."));
-    privacy.append(label("Stream quality, sound, discovery and network ports are on the Stream tab. Change those settings while the server is stopped. Monitor layout, rotation and panel visibility are in Quest settings.", "setting-detail"));
+    privacy.append(label("Stream quality, sound, discovery and network ports are on the Stream tab. Change those settings while the server is stopped. Virtual-monitor orientation and panel visibility are in Quest controls. Physical screens always follow the PC.", "setting-detail"));
     box->append(privacy);
     auto* reset = Gtk::make_managed<Gtk::Button>("Reset app preferences"); reset->set_halign(Gtk::Align::START);
     reset->signal_clicked().connect([this] {
@@ -82,10 +82,40 @@ void MainWindow::build_preferences() {
     });
     update_controls();
 }
-void MainWindow::apply_preferences() {
+void MainWindow::apply_theme() {
     auto settings = Gtk::Settings::get_default();
-    settings->property_gtk_theme_name() = preferences_.theme == "contrast" ? "HighContrast" : original_theme_;
-    settings->property_gtk_application_prefer_dark_theme() = preferences_.theme == "dark" || (preferences_.theme == "system" && original_dark_);
+    auto* native = settings->gobj();
+    // Reset removes our override and asks GTK for the current desktop value,
+    // rather than restoring a snapshot taken before a later desktop change.
+    if (preferences_.theme == "contrast") settings->property_gtk_theme_name() = "HighContrast";
+    else {
+        gtk_settings_reset_property(native, "gtk-theme-name");
+        // Recent GTK also maps HighContrast onto this separate setting.
+        if (g_object_class_find_property(G_OBJECT_GET_CLASS(native), "gtk-interface-contrast"))
+            gtk_settings_reset_property(native, "gtk-interface-contrast");
+    }
+    auto dark = preferences_.theme == "system" ? system_appearance_->dark()
+                                               : std::optional<bool>(preferences_.theme == "dark");
+    // GTK >= 4.20 uses a color-scheme enum. Resolve it at runtime so the same
+    // source also builds against the stable GTK bundled in the AppImage.
+    const char* property = "gtk-interface-color-scheme";
+    auto* spec = g_object_class_find_property(G_OBJECT_GET_CLASS(native), property);
+    if (spec && G_IS_PARAM_SPEC_ENUM(spec)) {
+        if (dark.has_value()) {
+            auto* values = G_ENUM_CLASS(g_type_class_ref(spec->value_type));
+            auto* value = g_enum_get_value_by_nick(values, *dark ? "dark" : "light");
+            if (value) g_object_set(native, property, value->value, nullptr);
+            g_type_class_unref(values);
+        } else gtk_settings_reset_property(native, property);
+    } else if (dark.has_value()) {
+        settings->property_gtk_application_prefer_dark_theme() = *dark;
+    } else {
+        gtk_settings_reset_property(native, "gtk-application-prefer-dark-theme");
+    }
+}
+void MainWindow::apply_preferences() {
+    apply_theme();
+    auto settings = Gtk::Settings::get_default();
     settings->property_gtk_enable_animations() = preferences_.animations;
     if (!text_provider_) { text_provider_ = Gtk::CssProvider::create(); Gtk::StyleProvider::add_provider_for_display(Gdk::Display::get_default(),text_provider_,GTK_STYLE_PROVIDER_PRIORITY_APPLICATION+1); }
     text_provider_->load_from_data("window { font-size: " + std::to_string(14.0 * preferences_.text_percent / 100.0) + "px; }");

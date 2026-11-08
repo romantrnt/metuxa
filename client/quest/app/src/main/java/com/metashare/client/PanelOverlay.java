@@ -49,7 +49,12 @@ final class PanelOverlay extends FrameLayout {
         int alpha = settings.panelOpacity() * 255 / 100;
         int panel = QuestUi.color(getContext(), R.color.quest_panel) & 0xffffff | alpha << 24;
         if (top != null) top.setBackgroundColor(panel);
-        if (bottom != null) bottom.setBackgroundColor(panel);
+        if (bottom != null) {
+            if (bottom.getBackground() instanceof android.graphics.drawable.GradientDrawable) {
+                android.graphics.drawable.GradientDrawable background = (android.graphics.drawable.GradientDrawable) bottom.getBackground().mutate();
+                background.setColor(panel); // Keep the toolbar's rounded outline while changing opacity.
+            } else bottom.setBackgroundColor(panel);
+        }
         render();
     }
     void reveal() { long now = SystemClock.uptimeMillis(); topState.reveal(now, settings.hideDelay() * 1000L); bottomState.reveal(now, settings.hideDelay() * 1000L); render(); }

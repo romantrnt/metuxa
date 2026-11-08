@@ -20,7 +20,7 @@ final class ConnectionCoordinator {
         final boolean audio;
         int desiredMonitors;
         int availableMonitors = 1;
-        boolean connected;
+        boolean connected, primaryLaunched;
         Connection(long generation, HostEndpoint endpoint, String pin, String token, boolean audio, int count) {
             this.generation = generation; this.endpoint = endpoint; this.pin = pin; this.token = token; this.audio = audio;
             desiredMonitors = Math.max(1, Math.min(3, count));

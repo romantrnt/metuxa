@@ -73,7 +73,13 @@ import runpy
 runpy.run_path(str(root / "tests/theme-checks.py"))
 
 # Display and input share the Android View transform, never a second pointer rotation.
-assert "surface.setMonitorRotation(rotation)" in panel
+assert "setMonitorRotation" not in panel and "settings.rotation" not in panel
+assert "PanelWindow.followStream(this, width, height)" in panel
+assert "requestOrientation(selected == 1)" in panel
+for name in (".MainActivity", ".StreamActivity", ".MonitorActivity"):
+    layout = activities[name].find("layout")
+    assert layout is not None and layout.get(a + "defaultWidth") == "1280dp" and layout.get(a + "defaultHeight") == "720dp"
+assert activities[".StreamActivity"].get(a + "taskAffinity") == "dev.metuxa.quest.stream"
 assert "MonitorGeometry.fit(" in panel
 assert "viewportParams.topMargin" not in panel and "viewportParams.bottomMargin" not in panel
 assert "setOnHoverListener((v, e) -> capturePointer(e))" in capture
@@ -92,3 +98,11 @@ stop = stream.split("public synchronized void stop()", 1)[1].split("public void 
 assert "closing.request()" in stop
 assert "closeSignalingSocket()" not in stop and "closing.await()" not in stop and "socket.close()" not in stop
 assert "new SocketShutdown(socket," in stream and "if(!running) return;" in stream
+
+# Initial bounds come from a pinned metadata-only exchange, never a discovery hint.
+probe = (src / "StreamMetadataProbe.java").read_text()
+assert "SecureTransport::pinnedSocket" in probe and '"AUTH " + token' in probe
+assert '"READY' not in probe and "RtpReceiver" not in probe and "VideoDecoder" not in probe
+assert "close.await()" in probe and probe.index("close.await()") < probe.index("listener.complete(result)")
+assert "!coordinator.matches(c.generation)" in main and "metadataProbe != attempt" in main
+assert "c.primaryLaunched || c.connected" in main and "cancelMetadataProbe(false)" in main

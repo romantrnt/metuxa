@@ -15,6 +15,7 @@ class TestPatternSource final : public FrameSource {
     explicit TestPatternSource(SourceFormat fmt, int monitor_index = 0);
     ~TestPatternSource() override;
 
+    display::Source display_source() const override { return display::Source::Test; }
     bool start(std::string& err) override;
     void stop() override;
     SourceFormat format() const override { return fmt_; }

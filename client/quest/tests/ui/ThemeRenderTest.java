@@ -12,7 +12,7 @@ import android.graphics.Canvas;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.CheckBox;
+import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -43,7 +43,7 @@ public class ThemeRenderTest {
 
     @Test public void toolbarLayoutsAndActions() throws Exception {
         for (int width : new int[] { 800, 360 }) {
-            RuntimeEnvironment.setQualifiers("w" + width + "dp-h200dp-mdpi");
+            RuntimeEnvironment.setQualifiers("w" + width + "dp-h200dp-night-mdpi");
             RuntimeEnvironment.setFontScale(width == 360 ? 1.5f : 1f);
             ActivityController<Activity> controller = Robolectric.buildActivity(Activity.class);
             Activity activity = controller.get(); activity.setTheme(R.style.MetuxaTheme); controller.create();
@@ -56,11 +56,13 @@ public class ThemeRenderTest {
                 public void onPointerToggle() { calls[2]++; }
                 public void onSettingsRequested() { calls[3]++; }
                 public void onDisconnectRequested() { calls[4]++; }
-                public void onRotateRequested() { calls[5]++; }
+                public void onOrientationRequested() { calls[5]++; }
             });
             controller.start().resume().visible(); toolbar.setScreenCount(2, 3);
             layout(root, width, QuestToolbar.height(activity) + 16);
             save(root, "toolbar-" + width);
+            TextView compact = find(root, "Screens", TextView.class); assertNotNull(compact);
+            assertEquals(width == 360 ? View.VISIBLE : View.INVISIBLE, compact.getVisibility());
             Button disconnect = find(root, "Disconnect", Button.class); assertNotNull(disconnect);
             Rect bounds = new Rect(0, 0, disconnect.getWidth(), disconnect.getHeight()); root.offsetDescendantRectToMyCoords(disconnect, bounds);
             assertTrue("Disconnect stays visible", bounds.left >= 0 && bounds.right <= width && bounds.top >= 0 && bounds.bottom <= root.getHeight());
@@ -92,10 +94,10 @@ public class ThemeRenderTest {
             assertEquals("Theme resources", expected, QuestUi.color(activity,R.color.quest_background));
             find(main,"Settings",Button.class).performClick(); AlertDialog settings = ShadowAlertDialog.getLatestAlertDialog();
             layout(settings.getWindow().getDecorView(),448,840); save(settings.getWindow().getDecorView(),"settings-theme-"+theme);
-            CheckBox awake = find(settings.getWindow().getDecorView(),"Keep the display awake while connected",CheckBox.class); awake.performClick();
+            CompoundButton awake = find(settings.getWindow().getDecorView(),"Keep the display awake while connected",CompoundButton.class); awake.performClick();
             assertFalse(new AppSettings(activity).keepAwake());
-            CheckBox updates = find(settings.getWindow().getDecorView(),"Check for updates when the launcher opens",CheckBox.class); updates.performClick();
-            CheckBox downloads = find(settings.getWindow().getDecorView(),"Download verified updates automatically",CheckBox.class); assertTrue(downloads.isEnabled());
+            CompoundButton updates = find(settings.getWindow().getDecorView(),"Check for updates when the launcher opens",CompoundButton.class); updates.performClick();
+            CompoundButton downloads = find(settings.getWindow().getDecorView(),"Download verified updates automatically",CompoundButton.class); assertTrue(downloads.isEnabled());
             updates.performClick(); assertFalse(downloads.isEnabled());
             settings.getButton(AlertDialog.BUTTON_POSITIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle(); assertFalse(settings.isShowing());
             AppSettings persisted = new AppSettings(activity); persisted.rotation("192.0.2.1:7878",0,270); persisted.rotation("192.0.2.1:7878",1,90);
@@ -103,6 +105,27 @@ public class ThemeRenderTest {
             controller.pause().stop().destroy();
         }
     }
+    @Test public void largeFontSettingsCanScrollToLastControl() throws Exception {
+        RuntimeEnvironment.setQualifiers("w360dp-h800dp-mdpi"); RuntimeEnvironment.setFontScale(1.5f);
+        AppSettings settings = new AppSettings(RuntimeEnvironment.getApplication()); settings.preferences.edit().clear().commit(); settings.flag("discover_on_open", false);
+        ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class, new Intent(RuntimeEnvironment.getApplication(), MainActivity.class).putExtra("manage", true)).create().start().resume().visible();
+        MainActivity activity = controller.get();
+        View root = ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0); layout(root, 360, 800);
+        find(root, "Settings", Button.class).performClick(); AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+        View decor = dialog.getWindow().getDecorView(); layout(decor, 328, 740); save(decor, "settings-large-font-top");
+        Button updates = find(decor, "Check for updates", Button.class); assertNotNull(updates);
+        View parent = updates; while (!(parent instanceof ScrollView)) parent = (View) parent.getParent();
+        ScrollView scroll = (ScrollView) parent; scroll.scrollTo(0, scroll.getChildAt(0).getHeight());
+        save(decor, "settings-large-font-bottom");
+        // A standalone Robolectric dialog has no real display-visible bounds.
+        // Verify the actual ScrollView coordinates and its rendered viewport instead.
+        assertTrue("Last settings control has scrolled into view", updates.getTop() >= scroll.getScrollY());
+        assertTrue("Last settings control fits in the viewport", updates.getBottom() <= scroll.getScrollY() + scroll.getHeight());
+        assertTrue(updates.isEnabled());
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle(); assertFalse(dialog.isShowing());
+        controller.pause().stop().destroy();
+    }
+
     @Test public void formSurvivesThemeRecreation() {
         RuntimeEnvironment.setQualifiers("w480dp-h900dp-notnight-mdpi"); RuntimeEnvironment.setFontScale(1f);
         AppSettings settings = new AppSettings(RuntimeEnvironment.getApplication()); settings.preferences.edit().clear().commit(); settings.flag("discover_on_open",false);
@@ -172,7 +195,7 @@ public class ThemeRenderTest {
         controller.pause().stop().destroy();
     }
     @Test public void overlayHandleTimersAndTouchFallback() throws Exception {
-        RuntimeEnvironment.setQualifiers("w600dp-h400dp-mdpi");RuntimeEnvironment.setFontScale(1f);
+        RuntimeEnvironment.setQualifiers("w600dp-h400dp-night-mdpi");RuntimeEnvironment.setFontScale(1f);
         ActivityController<Activity> controller=Robolectric.buildActivity(Activity.class).create().start().resume().visible();Activity activity=controller.get();
         AppSettings prefs=new AppSettings(activity);prefs.preferences.edit().clear().commit();prefs.integer("hide_delay",2);
         int[] localInput={0},remoteTouches={0}; PanelOverlay root=new PanelOverlay(activity,()->localInput[0]++);activity.setContentView(root);
@@ -182,6 +205,11 @@ public class ThemeRenderTest {
             public void onScreenCountRequested(int count){} public void onKeyboardRequested(){} public void onPointerToggle(){} public void onSettingsRequested(){} public void onDisconnectRequested(){}
         });
         View bottom=toolbar.view();root.panels(top,bottom);layout(root,600,400);
+        assertTrue(find(root, "Screens", TextView.class).getWidth() > 0);
+        assertTrue(bottom.getBackground() instanceof android.graphics.drawable.GradientDrawable);
+        android.graphics.drawable.GradientDrawable background = (android.graphics.drawable.GradientDrawable) bottom.getBackground();
+        assertEquals(16f, background.getCornerRadius(), .01f); prefs.integer("panel_opacity", 70); root.configure();
+        assertSame(background, bottom.getBackground()); assertEquals(70 * 255 / 100, android.graphics.Color.alpha(background.getColor().getDefaultColor()));
         assertEquals(400,video.getHeight());assertEquals(View.VISIBLE,bottom.getVisibility());
         Button settingsButton = find(root,"Settings",Button.class); settingsButton.setFocusableInTouchMode(true); int beforeFocus=localInput[0]; settingsButton.requestFocus();
         assertTrue("Native control focus releases remote input",localInput[0]>beforeFocus);settingsButton.clearFocus();root.setFocusableInTouchMode(true);root.requestFocus();
@@ -192,6 +220,85 @@ public class ThemeRenderTest {
         android.view.MotionEvent event=android.view.MotionEvent.obtain(1,2,android.view.MotionEvent.ACTION_DOWN,200,200,0);root.dispatchTouchEvent(event);event.recycle();assertEquals(1,remoteTouches[0]);
         prefs.integer("top_bar",PanelVisibility.HOVER);root.configure();android.view.MotionEvent hover=pointerHover(10,2);root.dispatchGenericMotionEvent(hover);hover.recycle();assertEquals(View.VISIBLE,top.getVisibility());
         root.resumed(false);root.close();Shadows.shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(20));controller.pause().stop().destroy();
+    }
+
+    @Test public void desktopOrientationAndLegacyImageRotation() throws Exception {
+        RuntimeEnvironment.setQualifiers("w1200dp-h1000dp-mdpi"); RuntimeEnvironment.setFontScale(1f);
+        AppSettings settings = new AppSettings(RuntimeEnvironment.getApplication()); settings.preferences.edit().clear().commit();
+        settings.rotation("192.0.2.1:7878", 0, 90); // v0.3.0 used this as a texture rotation.
+        ConnectionCoordinator coordinator = ConnectionCoordinator.INSTANCE;
+        ConnectionCoordinator.Connection connection = coordinator.connect(new HostEndpoint("192.0.2.1", 7878), "0".repeat(64), "0".repeat(32), false, 1);
+        Intent intent = new Intent(RuntimeEnvironment.getApplication(), StreamActivity.class).putExtra("generation", connection.generation);
+        // Do not attach the TextureView or invoke surface availability: no media, sockets or discovery.
+        ActivityController<StreamActivity> controller = Robolectric.buildActivity(StreamActivity.class, intent).create();
+        StreamActivity activity = controller.get(); RemoteSurfaceView surface = ReflectionHelpers.getField(activity, "surface");
+        assertEquals("Legacy image rotation must not tilt physical desktops", 0f, surface.getRotation(), 0f);
+        ReflectionHelpers.callInstanceMethod(activity, "updateStreamSize", ReflectionHelpers.ClassParameter.from(int.class, 1080), ReflectionHelpers.ClassParameter.from(int.class, 1920));
+        assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, activity.getRequestedOrientation());
+        assertArrayEquals(new int[] {1080, 1920}, settings.streamSize("192.0.2.1:7878", 0));
+        ReflectionHelpers.setField(activity, "displaySource", "physical");
+        ReflectionHelpers.callInstanceMethod(activity, "chooseOrientation"); AlertDialog explanation = ShadowAlertDialog.getLatestAlertDialog();
+        assertTrue(Shadows.shadowOf(explanation).getMessage().toString().contains("mirrors the physical monitor exactly"));
+        layout(explanation.getWindow().getDecorView(), 520, 420); save(explanation.getWindow().getDecorView(), "physical-display-info"); explanation.dismiss();
+        ReflectionHelpers.setField(activity, "displaySource", "virtual"); ReflectionHelpers.setField(activity, "orientationSupported", true);
+        ReflectionHelpers.callInstanceMethod(activity, "chooseOrientation"); AlertDialog choice = ShadowAlertDialog.getLatestAlertDialog();
+        assertEquals("Portrait", choice.getListView().getAdapter().getItem(1));
+        choice.getButton(AlertDialog.BUTTON_NEGATIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle(); assertFalse(choice.isShowing());
+        assertFalse(ReflectionHelpers.getField(activity, "orientationPending")); assertNull(ReflectionHelpers.getField(activity, "stream"));
+        ReflectionHelpers.callInstanceMethod(activity, "updateStreamSize", ReflectionHelpers.ClassParameter.from(int.class, 1920), ReflectionHelpers.ClassParameter.from(int.class, 1080));
+        assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, activity.getRequestedOrientation());
+        assertEquals(0f, surface.getRotation(), 0f);
+        ReflectionHelpers.callInstanceMethod(activity, "displayResult", ReflectionHelpers.ClassParameter.from(String.class, "restart_required"), ReflectionHelpers.ClassParameter.from(int.class, 0), ReflectionHelpers.ClassParameter.from(int.class, 0));
+        ReflectionHelpers.callInstanceMethod(activity, "showStatus", ReflectionHelpers.ClassParameter.from(String.class, "View-only: remote input is disabled on the server"));
+        TextView status = ReflectionHelpers.getField(activity, "status"); assertTrue(status.getText().toString().contains("could not be restored"));
+        assertFalse(ReflectionHelpers.getField(activity, "orientationSupported")); controller.destroy(); coordinator.disconnect();
+    }
+    @Test public void returningToActiveScreensDoesNotProbe() {
+        RuntimeEnvironment.setQualifiers("w1200dp-h1000dp-mdpi"); RuntimeEnvironment.setFontScale(1f);
+        AppSettings settings = new AppSettings(RuntimeEnvironment.getApplication()); settings.preferences.edit().clear().commit(); settings.flag("discover_on_open", false);
+        ConnectionCoordinator coordinator = ConnectionCoordinator.INSTANCE;
+        ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class, new Intent(RuntimeEnvironment.getApplication(), MainActivity.class).putExtra("manage", true)).create().start().resume().visible();
+        ConnectionCoordinator.Connection connection = coordinator.connect(new HostEndpoint("192.0.2.1", 7878), "0".repeat(64), "0".repeat(32), false, 1); connection.connected = true;
+        MainActivity activity = controller.get(); ReflectionHelpers.callInstanceMethod(activity, "openScreens");
+        assertNull(ReflectionHelpers.getField(activity, "metadataProbe")); assertTrue(connection.primaryLaunched);
+        assertEquals(StreamActivity.class.getName(), Shadows.shadowOf(activity).getNextStartedActivity().getComponent().getClassName());
+        controller.pause().stop().destroy(); coordinator.disconnect();
+    }
+
+    @Test public void staleAndCancelledProbeCannotLaunchAnotherSession() {
+        RuntimeEnvironment.setQualifiers("w1200dp-h1000dp-mdpi"); RuntimeEnvironment.setFontScale(1f);
+        AppSettings settings = new AppSettings(RuntimeEnvironment.getApplication()); settings.preferences.edit().clear().commit(); settings.flag("discover_on_open", false);
+        ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class, new Intent(RuntimeEnvironment.getApplication(), MainActivity.class).putExtra("manage", true)).create().start().resume().visible();
+        MainActivity activity = controller.get(); ConnectionCoordinator coordinator = ConnectionCoordinator.INSTANCE;
+        ConnectionCoordinator.Connection old = coordinator.connect(new HostEndpoint("192.0.2.1", 7878), "0".repeat(64), "0".repeat(32), false, 1);
+        StreamMetadataProbe probe = new StreamMetadataProbe(pin -> { throw new AssertionError("No network in state test"); });
+        ReflectionHelpers.setField(activity, "metadataProbe", probe); ReflectionHelpers.setField(activity, "pendingPrimaryGeneration", old.generation);
+        // A repeated Return while the first probe is pending must reuse it.
+        ReflectionHelpers.callInstanceMethod(activity, "openScreens"); assertSame(probe, ReflectionHelpers.getField(activity, "metadataProbe"));
+        ConnectionCoordinator.Connection replacement = coordinator.connect(new HostEndpoint("192.0.2.2", 7878), "0".repeat(64), "0".repeat(32), false, 1);
+        ReflectionHelpers.callInstanceMethod(activity, "finishMetadataProbe", ReflectionHelpers.ClassParameter.from(StreamMetadataProbe.class, probe), ReflectionHelpers.ClassParameter.from(ConnectionCoordinator.Connection.class, old), ReflectionHelpers.ClassParameter.from(int[].class, new int[] {1080, 1920}));
+        assertNull(Shadows.shadowOf(activity).getNextStartedActivity()); assertFalse(replacement.primaryLaunched);
+        assertArrayEquals(new int[] {1280, 720}, settings.streamSize(old.endpoint.key(), 0));
+        ReflectionHelpers.callInstanceMethod(activity, "cancelMetadataProbe", ReflectionHelpers.ClassParameter.from(boolean.class, true));
+        ReflectionHelpers.callInstanceMethod(activity, "finishMetadataProbe", ReflectionHelpers.ClassParameter.from(StreamMetadataProbe.class, probe), ReflectionHelpers.ClassParameter.from(ConnectionCoordinator.Connection.class, replacement), ReflectionHelpers.ClassParameter.from(int[].class, new int[] {1200, 1920}));
+        assertNull(Shadows.shadowOf(activity).getNextStartedActivity()); assertFalse(replacement.primaryLaunched);
+        controller.pause().stop().destroy(); coordinator.disconnect();
+    }
+
+    @Test public void windowLaunchHintsAndSettingsRows() {
+        RuntimeEnvironment.setQualifiers("w1200dp-h1000dp-mdpi"); RuntimeEnvironment.setFontScale(1f);
+        ActivityController<Activity> controller = Robolectric.buildActivity(Activity.class).create(); Activity activity = controller.get();
+        for (int[] video : new int[][] {{1920,1080}, {1080,1920}, {1920,1200}}) {
+            Rect bounds = PanelWindow.launchBounds(activity, video[0], video[1]);
+            assertTrue(bounds.width() > 0 && bounds.height() > 0); assertTrue(bounds.width() <= 1200 && bounds.height() <= 1000);
+            assertEquals((double) video[0] / video[1], (double) bounds.width() / bounds.height(), .003);
+        }
+        LinearLayout rows = QuestUi.column(activity); int[] selected = {-1}; QuestUi.choice(rows, "Theme", new String[] {"Dark", "Light", "Use headset theme"}, 0, value -> selected[0] = value);
+        activity.setContentView(rows); controller.start().resume().visible(); ((Button) rows.getChildAt(0)).performClick();
+        android.widget.PopupMenu popup = org.robolectric.shadows.ShadowPopupMenu.getLatestPopupMenu();
+        Shadows.shadowOf(popup).getOnMenuItemClickListener().onMenuItemClick(popup.getMenu().findItem(2));
+        assertEquals(2, selected[0]); assertTrue(((Button) rows.getChildAt(0)).getText().toString().contains("Use headset theme")); popup.dismiss();
+        controller.pause().stop().destroy();
     }
 
     private static android.view.MotionEvent pointerHover(float x,float y) {
@@ -220,12 +327,15 @@ public class ThemeRenderTest {
         save(scroll, name + "-viewport");
         save(scroll.getChildAt(0), name + "-full-page");
         inspectControls(scroll, width);
+        scroll.scrollTo(0, scroll.getChildAt(0).getHeight());
+        assertTrue("Last launcher section is reachable", find(scroll, "Input diagnostics", Button.class).getLocalVisibleRect(new Rect()));
+        save(scroll, name + "-bottom"); scroll.scrollTo(0, 0);
 
         Button viewOnly = find(scroll, "View only", Button.class);
         assertNotNull(viewOnly); assertTrue(viewOnly.performClick());
         assertEquals("View only", new AppSettings(activity).inputOptions().presetLabel());
         assertTrue(viewOnly.isSelected());
-        assertFalse(((CheckBox) ReflectionHelpers.getField(activity, "keyboardInput")).isChecked());
+        assertFalse(((CompoundButton) ReflectionHelpers.getField(activity, "keyboardInput")).isChecked());
         Button keyboard = find(scroll, "Keyboard only", Button.class); keyboard.performClick();
         assertEquals("Keyboard only", new AppSettings(activity).inputOptions().presetLabel());
         assertTrue(keyboard.isSelected()); assertFalse(viewOnly.isSelected());
@@ -240,6 +350,9 @@ public class ThemeRenderTest {
             layout(scroll, width, height); inspectControls(scroll, width); save(scroll, "wide-resized-back");
             assertEquals("Full remote", new AppSettings(activity).inputOptions().presetLabel());
         }
+        Button pointerDetails = find(scroll, "Pointer device rules", Button.class); assertNotNull(pointerDetails);
+        pointerDetails.performClick(); layout(scroll, width, height); inspectControls(scroll, width);
+        assertTrue(find(scroll, "Choose allowed pointer devices", Button.class).isShown());
         find(scroll, "Choose allowed pointer devices", Button.class).performClick();
         AlertDialog devices = ShadowAlertDialog.getLatestAlertDialog(); assertTrue(devices.isShowing());
         layout(devices.getWindow().getDecorView(), Math.min(width - 32, 600), 540);
@@ -254,6 +367,7 @@ public class ThemeRenderTest {
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle(); assertFalse(dialog.isShowing());
         assertNull(ConnectionCoordinator.INSTANCE.current());
 
+        find(scroll, "Input diagnostics", Button.class).performClick();
         find(scroll, "Inspect / reset metadata", Button.class).performClick();
         AlertDialog metadata = ShadowAlertDialog.getLatestAlertDialog(); assertTrue(metadata.isShowing());
         layout(metadata.getWindow().getDecorView(), Math.min(width - 32, 640), 600);
@@ -289,6 +403,10 @@ public class ThemeRenderTest {
     private static void layout(View view, int width, int height) {
         view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
         view.layout(0, 0, width, height);
+        if (view.isLayoutRequested()) {
+            view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+            view.layout(0, 0, width, height);
+        }
     }
     private static void save(View view, String name) throws Exception {
         assertTrue("Nonzero render size", view.getWidth() > 0 && view.getHeight() > 0);

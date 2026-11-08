@@ -10,15 +10,20 @@
         android:supportsRtl="true">
         <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|questpro" />
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop"
-            android:resizeableActivity="true"
+            android:resizeableActivity="true" android:screenOrientation="landscape"
             android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode|density">
+            <layout android:defaultWidth="1280dp" android:defaultHeight="720dp" android:minWidth="360dp" android:minHeight="225dp" />
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
-        <activity android:name=".StreamActivity" android:exported="false" android:launchMode="singleTop"
-            android:resizeableActivity="true"
-            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode|density" />
-        <activity android:name=".MonitorActivity" android:exported="false" android:resizeableActivity="true"
-            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode|density" />
+        <activity android:name=".StreamActivity" android:exported="false" android:launchMode="singleTask" android:taskAffinity="dev.metuxa.quest.stream"
+            android:resizeableActivity="true" android:screenOrientation="landscape"
+            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode|density">
+            <layout android:defaultWidth="1280dp" android:defaultHeight="720dp" android:minWidth="360dp" android:minHeight="225dp" />
+        </activity>
+        <activity android:name=".MonitorActivity" android:exported="false" android:resizeableActivity="true" android:screenOrientation="landscape"
+            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode|density">
+            <layout android:defaultWidth="1280dp" android:defaultHeight="720dp" android:minWidth="360dp" android:minHeight="225dp" />
+        </activity>
         <receiver android:name=".UpdateInstallReceiver" android:exported="false" />
     </application>
 </manifest>

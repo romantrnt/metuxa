@@ -29,7 +29,7 @@ It is an independent continuation of [MetaShare](https://github.com/makemake-kbo
 - **Sound, once.** Optional system audio plays through the primary panel. No microphone capture.
 - **Deliberate input.** View-only on the server by default. Movement, clicks, scroll and keyboard have independent, shared controls across Quest panels.
 - **Compare and pair.** Open a one-minute pairing window on the PC, compare the short code, and confirm on both devices. Manual fingerprint pairing remains available.
-- **Adjust your workspace.** Rotate each monitor, hide the top and bottom controls independently, choose a theme and text size. A Controls button stays available on Quest.
+- **Adjust your workspace.** Choose portrait or landscape for supported virtual monitors. A physical screen always mirrors its actual orientation. Hide the top and bottom controls independently, choose a theme and text size, and keep actions reachable through Controls.
 - **Signed updates.** Check GitHub, download verified releases, and install from the app. Android keeps its system confirmation; Linux keeps a backup.
 - **Local connection.** Direct PC-to-headset streaming on your network, without a cloud relay or an account service.
 
@@ -79,7 +79,9 @@ Default network ports: discovery **UDP 7877**, TLS control **TCP 7878–7880** f
 
 ## Settings and updates
 
-Open **Settings** on the PC or Quest. Quest has separate top/bottom panel modes: always visible, visible on hover, or hidden after a delay. Tap **Controls** to keep the bars open when using hands or a controller. Rotation is saved separately for each computer and monitor; pointer coordinates follow the displayed orientation.
+Open **Settings** on the PC or Quest. Quest has separate top/bottom panel modes: always visible, visible on hover, or hidden after a delay. Tap **Controls** to keep the bars open when using hands or a controller. A physical monitor stays as it is on the PC. Supported virtual monitors can switch between portrait and landscape, changing the desktop resolution so applications reflow with upright content. This affects only the selected virtual monitor. See [Monitor orientation](docs/ORIENTATION.md) for support and limits.
+
+Before opening the first stream panel, Quest reads its dimensions over the authenticated connection without starting media, then supplies window-size hints. Saved dimensions or landscape defaults are used if this short check is unavailable. Horizon controls the final outer window size and may preserve a size chosen previously. The PC’s **System** theme follows the desktop appearance preference, including changes while the app is open.
 
 Updates are hosted by GitHub and signed with the release key. Choose manual checks, notifications or automatic downloads; installation remains explicit. The APK keeps `dev.metuxa.quest` and its signing identity, while its visible name follows the release, for example **metuxa v0.3.0**. Some Horizon library views may choose to display the package ID; Android's application label cannot force those views to change.
 

@@ -142,16 +142,28 @@ void RtpServer::on_disconnect() {
 
 int RtpServer::peer_count() const {
     std::lock_guard<std::mutex> lk(peer_mu_);
-    return peer_streaming_ ? 1 : 0;
+    return peer_streaming_ && !display_reconnect_ && !display_failed_ ? 1 : 0;
+}
+
+void RtpServer::update_display_format(const VideoFormat& v) {
+    std::scoped_lock lock(peer_mu_, send_mu_);
+    video_ = v;
+    if (v.codec == proto::Codec::kH265)
+        video_packer_ = std::make_unique<rtp::H265RtpPacketizer>(video_ssrc_);
+    else
+        video_packer_ = std::make_unique<rtp::H264RtpPacketizer>(video_ssrc_);
 }
 
 void RtpServer::on_connect(const sockaddr_in& peer) {
+    // The signaling thread serializes reconnect behind any in-flight resize.
+    if (display_failed_) throw std::runtime_error("Virtual monitor needs sharing to be restarted");
     {
         std::lock_guard<std::mutex> lk(peer_mu_);
         peer_udp_ = peer;
         peer_udp_.sin_port = 0;
         peer_streaming_ = false;
         session_connected_ = true;
+        display_reconnect_ = false;
         if (!media_send_.generate(security::MediaCipher::kServer) ||
             !media_receive_.generate(security::MediaCipher::kClient))
             throw std::runtime_error("Unable to create session keys");
@@ -161,14 +173,16 @@ void RtpServer::on_connect(const sockaddr_in& peer) {
 }
 
 void RtpServer::send_hello() {
-    const char* codec = (video_.codec == proto::Codec::kH265) ? "h265" : "h264";
     sockaddr_in local{}; socklen_t size=sizeof(local);
     if (::getsockname(udp_fd_,reinterpret_cast<sockaddr*>(&local),&size)!=0)
         throw std::runtime_error("Unable to describe media socket");
     std::ostringstream body;
     {
         std::lock_guard<std::mutex> lk(peer_mu_);
+        const char* codec = (video_.codec == proto::Codec::kH265) ? "h265" : "h264";
         body << "{\"version\":5,\"monitor_count\":" << monitor_count_ << ",\"input\":" << (input_enabled_ && on_input ? "true":"false")
+             << ",\"display\":{\"source\":\"" << display::name(display_source_)
+             << "\",\"orientation\":" << (orientation_enabled_ && on_display_orientation ? "true" : "false") << "}"
              << ",\"udp_port\":" << ntohs(local.sin_port)
              << ",\"security\":{\"version\":1,\"cipher\":\"AES-256-GCM\",\"s2c_key\":\"" << media_send_.key_hex()
              << "\",\"s2c_prefix\":\"" << media_send_.prefix_hex()
@@ -188,7 +202,7 @@ void RtpServer::send_hello() {
 }
 
 bool RtpServer::send_secure(const std::uint8_t* data, std::size_t size) {
-    if (!peer_streaming_) return false;
+    if (!peer_streaming_ || display_reconnect_ || display_failed_) return false;
     std::vector<std::uint8_t> sealed;
     if (!media_send_.seal(data,size,sealed)) return false;
     return ::sendto(udp_fd_,sealed.data(),sealed.size(),MSG_DONTWAIT,
@@ -226,9 +240,37 @@ void RtpServer::on_message(const signal::Message& m) {
             throw std::runtime_error("Input capability update failed");
         if (on_client_state) on_client_state(true);
         if (on_keyframe_request) on_keyframe_request();
+    } else if (m.type == signal::Type::kDisplayOrientation) {
+        bool supported, busy;
+        {
+            std::lock_guard lock(peer_mu_);
+            if (!peer_streaming_) throw std::runtime_error("DISPLAY_ORIENTATION before READY");
+            supported = display_source_ == display::Source::Virtual && orientation_enabled_ && on_display_orientation;
+            const auto now = std::chrono::steady_clock::now();
+            busy = display_reconnect_ || now - last_orientation_ < std::chrono::seconds(2);
+            if (supported && !busy) {
+                display_reconnect_ = true;
+                last_orientation_ = now;
+            }
+        }
+        std::string result;
+        if (!supported) result = "unsupported";
+        else if (busy) result = "busy";
+        else {
+            reset_video_queue();
+            if (on_input_release) on_input_release();
+            const bool changed = on_display_orientation(m.body == "portrait");
+            std::lock_guard lock(peer_mu_);
+            result = display_failed_ ? "restart_required" :
+                changed ? "ok " + std::to_string(video_.width) + " " + std::to_string(video_.height) : "failed";
+        }
+        if (!signaling_.send({signal::Type::kDisplayResult, result}))
+            throw std::runtime_error("Display orientation result failed");
+        if (result == "restart_required")
+            throw std::runtime_error("Virtual monitor restore failed; restart sharing");
     } else if (m.type == signal::Type::kInput) {
         bool ready;
-        { std::lock_guard lk(peer_mu_); ready=peer_streaming_; }
+        { std::lock_guard lk(peer_mu_); ready=peer_streaming_; if (display_reconnect_) return; }
         if (!ready) throw std::runtime_error("INPUT before READY");
         if (m.body == "r") { if (on_input_release) on_input_release(); return; }
         if (input_enabled_ && on_input) {
@@ -263,7 +305,7 @@ void RtpServer::broadcast_video(const std::uint8_t* data, std::size_t size,
     {
         // Keep the connection and queue generation stable while packetizing.
         std::scoped_lock lk(peer_mu_, send_mu_);
-        if (!peer_streaming_ || (awaiting_keyframe_ && !keyframe)) return;
+        if (!peer_streaming_ || display_reconnect_ || display_failed_ || (awaiting_keyframe_ && !keyframe)) return;
         std::vector<rtp::Packet> packets;
         video_packer_->packetize(data, size, pts_usec, packets);
         if (packets.empty()) return;

@@ -2,6 +2,7 @@
 
 #include <unistd.h>
 
+#include "pipewire_desktop_resize.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -326,6 +327,10 @@ bool PortalPipeWireSource::run_portal_session(bool with_input, int& pw_fd,
         }
         node_id = std::get<0>(streams[0]);
         node_id_ = node_id;  // absolute pointer moves target this stream
+        const auto& properties = std::get<1>(streams[0]);
+        const auto type = properties.find("source_type");
+        source_type_ = type != properties.end() && type->second.containsValueOfType<std::uint32_t>()
+            ? type->second.get<std::uint32_t>() : 0;
     }
 
     // 4) OpenPipeWireRemote -> file descriptor.
@@ -775,6 +780,25 @@ int PortalPipeWireSource::latest_frame(AVFrame** out, std::int64_t& pts_usec) {
     if (!have_new_) return 0;
     have_new_ = false;
     return deliver_front_locked(out, pts_usec);
+}
+
+bool PortalPipeWireSource::resize_desktop(int width, int height, std::string& err) {
+    if (!can_set_orientation() || !display::valid_size(width, height)) {
+        err = "Desktop orientation requires an owned virtual monitor with supported dimensions";
+        return false;
+    }
+    if (!running_ || !loop_) { err = "Virtual monitor is no longer active"; return false; }
+    pw_thread_loop_lock(loop_);
+    { std::lock_guard lock(mu_); have_new_ = false; }
+    const bool submitted = request_desktop_size(stream_, width, height, opts_.fps_hint);
+    pw_thread_loop_unlock(loop_);
+    if (!submitted) { err = "PipeWire rejected the virtual monitor dimensions"; return false; }
+    std::unique_lock lock(mu_);
+    const bool ready = cv_.wait_for(lock, std::chrono::milliseconds(1500), [&] {
+        return !running_ || (have_new_ && front_ && front_->width == width && front_->height == height);
+    });
+    if (!ready || !running_) { err = "Virtual monitor did not produce the requested desktop dimensions"; return false; }
+    return true;
 }
 
 }  // namespace metashare

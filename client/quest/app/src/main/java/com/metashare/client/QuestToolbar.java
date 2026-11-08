@@ -16,10 +16,10 @@ final class QuestToolbar {
         void onPointerToggle();
         void onSettingsRequested();
         void onDisconnectRequested();
-        default void onRotateRequested() {}
+        default void onOrientationRequested() {}
         default void onLocalControlActivated() {}
     }
-    private final Button pointer, minus, plus, keyboard, rotate;
+    private final Button pointer, minus, plus, keyboard, orientation;
     private final FrameLayout footer;
     private InputOptions options = InputOptions.full();
     private final TextView count;
@@ -34,7 +34,7 @@ final class QuestToolbar {
         plus = QuestUi.button(activity, "+", false); plus.setContentDescription("Open another monitor window"); plus.setOnClickListener(v -> { callbacks.onLocalControlActivated(); callbacks.onScreenCountRequested(screenCount + 1); });
         count = QuestUi.text(activity, "1 / 1", 14, QuestUi.color(activity, R.color.quest_muted)); count.setGravity(Gravity.CENTER); count.setPadding(QuestUi.dp(activity, 8), 0, QuestUi.dp(activity, 8), 0);
         if (primary) { controls.addView(minus); controls.addView(count); controls.addView(plus); }
-        rotate = QuestUi.button(activity, "Rotate: 0°", false); controls.addView(rotate); rotate.setOnClickListener(v -> { callbacks.onLocalControlActivated(); callbacks.onRotateRequested(); });
+        orientation = QuestUi.button(activity, "Display", false); controls.addView(orientation); orientation.setOnClickListener(v -> { callbacks.onLocalControlActivated(); callbacks.onOrientationRequested(); });
         Button settings = QuestUi.button(activity, "Settings", false); controls.addView(settings); settings.setOnClickListener(v -> { callbacks.onLocalControlActivated(); callbacks.onSettingsRequested(); });
         Button disconnect = QuestUi.button(activity, "Disconnect", false); disconnect.setTextColor(QuestUi.color(activity, R.color.quest_error));
         disconnect.setContentDescription("Disconnect all metuxa screens"); disconnect.setOnClickListener(v -> { callbacks.onLocalControlActivated(); callbacks.onDisconnectRequested(); });
@@ -49,7 +49,7 @@ final class QuestToolbar {
         more.setOnClickListener(v -> {
             callbacks.onLocalControlActivated();
             android.widget.PopupMenu menu = new android.widget.PopupMenu(activity, more);
-            menu.getMenu().add(0, 1, 0, "Settings"); menu.getMenu().add(0, 2, 1, "Rotate clockwise");
+            menu.getMenu().add(0, 1, 0, "Settings"); menu.getMenu().add(0, 2, 1, "Desktop orientation");
             menu.getMenu().add(0, 3, 2, "Open keyboard").setEnabled(options.keyboard);
             menu.getMenu().add(0, 4, 3, "Pointer controls");
             if (primary) {
@@ -61,7 +61,7 @@ final class QuestToolbar {
                 callbacks.onLocalControlActivated();
                 switch (item.getItemId()) {
                     case 1: callbacks.onSettingsRequested(); break;
-                    case 2: callbacks.onRotateRequested(); break;
+                    case 2: callbacks.onOrientationRequested(); break;
                     case 3: callbacks.onKeyboardRequested(); break;
                     case 4: if (options.pointerActions()) callbacks.onPointerToggle(); else callbacks.onSettingsRequested(); break;
                     case 5: callbacks.onScreenCountRequested(screenCount + 1); break;
@@ -73,24 +73,39 @@ final class QuestToolbar {
             }); menu.show();
         });
         // Disconnect and More remain fixed when the row overflows.
-        footer = new FrameLayout(activity); footer.setBackgroundColor(QuestUi.color(activity, R.color.quest_panel));
+        footer = new FrameLayout(activity);
+        footer.setBackground(QuestUi.outlined(activity, QuestUi.color(activity, R.color.quest_panel), 16, QuestUi.color(activity, R.color.quest_border), 1));
+        params.setMarginStart(QuestUi.dp(activity, 8)); params.setMarginEnd(QuestUi.dp(activity, 8)); params.bottomMargin = QuestUi.dp(activity, 8);
         disconnect.measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED);
         int disconnectWidth = Math.max(QuestUi.dp(activity, 132), disconnect.getMeasuredWidth());
         more.measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED);
         int moreWidth = Math.max(QuestUi.dp(activity, 64), more.getMeasuredWidth());
         FrameLayout.LayoutParams scrollParams = new FrameLayout.LayoutParams(-1, -1); scrollParams.setMarginEnd(disconnectWidth + moreWidth + QuestUi.dp(activity, 12));
         footer.addView(scroll, scrollParams);
+        TextView compact = QuestUi.text(activity, primary ? "Screens" : "Monitor", 14, QuestUi.color(activity, R.color.quest_muted));
+        compact.setGravity(Gravity.CENTER_VERTICAL); compact.setSingleLine(true); compact.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        compact.setPadding(QuestUi.dp(activity, 12), 0, 0, 0); compact.setVisibility(android.view.View.INVISIBLE);
+        compact.setContentDescription("Use More for all monitor controls");
+        footer.addView(compact, new FrameLayout.LayoutParams(scrollParams));
+        // Collapse the entire row before a half-button is exposed. More contains every action.
+        scroll.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            boolean overflow = controls.getMeasuredWidth() > scroll.getWidth();
+            scroll.setVisibility(overflow ? android.view.View.INVISIBLE : android.view.View.VISIBLE);
+            compact.setVisibility(overflow ? android.view.View.VISIBLE : android.view.View.INVISIBLE);
+        });
         FrameLayout.LayoutParams moreParams = new FrameLayout.LayoutParams(moreWidth, -2, Gravity.END | Gravity.CENTER_VERTICAL);
         moreParams.setMarginEnd(disconnectWidth + QuestUi.dp(activity, 8)); footer.addView(more, moreParams);
         FrameLayout.LayoutParams disconnectParams = new FrameLayout.LayoutParams(disconnectWidth, -2, Gravity.END | Gravity.CENTER_VERTICAL);
         disconnectParams.setMarginEnd(QuestUi.dp(activity, 4)); footer.addView(disconnect, disconnectParams);
-        android.view.View divider = new android.view.View(activity); divider.setBackgroundColor(QuestUi.color(activity, R.color.quest_border));
-        footer.addView(divider, new FrameLayout.LayoutParams(-1, QuestUi.dp(activity, 1), Gravity.TOP));
         root.addView(footer, params);
         setScreenCount(1, 1); setInputOptions(new AppSettings(activity).inputOptions());
     }
     android.view.View view() { return footer; }
-    void setRotation(int value) { rotate.setText("Rotate: " + value + "°"); rotate.setContentDescription("Rotate this monitor clockwise. Current rotation " + value + " degrees."); }
+    void setOrientation(int width, int height, boolean pending) {
+        orientation.setText(pending ? "Changing display…" : "Display");
+        orientation.setContentDescription(pending ? "Changing virtual desktop orientation" : "Desktop orientation and source information"
+            + (width > 0 ? ". " + width + " by " + height + ". " + (height > width ? "Portrait" : "Landscape") : ""));
+    }
     static int height(android.content.Context context) {
         return QuestUi.dp(context, Math.max(68, 32 + 22 * context.getResources().getConfiguration().fontScale));
     }

@@ -1,4 +1,5 @@
 #include "main_window.hpp"
+#include "fake_settings_portal.hpp"
 #include <array>
 #include <csignal>
 #include <iostream>
@@ -52,6 +53,80 @@ bool click_dialog(const char* text) {
 }
 struct ControlUiTest {
     MainWindow& w;
+    FakeSettingsPortal& portal;
+    int theme_step = 0;
+    bool dark() const {
+        auto* settings = Gtk::Settings::get_default()->gobj();
+        auto* spec = g_object_class_find_property(G_OBJECT_GET_CLASS(settings), "gtk-interface-color-scheme");
+        if (spec && G_IS_PARAM_SPEC_ENUM(spec)) {
+            int current = 0; g_object_get(settings, "gtk-interface-color-scheme", &current, nullptr);
+            auto* values = G_ENUM_CLASS(g_type_class_ref(spec->value_type));
+            auto* value = g_enum_get_value_by_nick(values, "dark");
+            const bool result = value && current == value->value;
+            g_type_class_unref(values); return result;
+        }
+        return Gtk::Settings::get_default()->property_gtk_application_prefer_dark_theme();
+    }
+    bool high_contrast() const {
+        auto* settings = Gtk::Settings::get_default()->gobj();
+        auto* spec = g_object_class_find_property(G_OBJECT_GET_CLASS(settings), "gtk-interface-contrast");
+        if (spec && G_IS_PARAM_SPEC_ENUM(spec)) {
+            int current = 0; g_object_get(settings, "gtk-interface-contrast", &current, nullptr);
+            auto* values = G_ENUM_CLASS(g_type_class_ref(spec->value_type));
+            auto* value = g_enum_get_value_by_nick(values, "more");
+            const bool result = value && current == value->value;
+            g_type_class_unref(values); return result;
+        }
+        return Gtk::Settings::get_default()->property_gtk_theme_name() == "HighContrast";
+    }
+    bool check_theme() {
+        auto settings = Gtk::Settings::get_default();
+        switch (theme_step) {
+        case 0:
+            if (w.system_appearance_->dark() != true) return false;
+            check(w.preferences_.theme == "system" && dark(), "System reads dark portal preference at startup");
+            check(snapshot("system-dark"), "System dark screenshot");
+            portal.change(2); ++theme_step; return false;
+        case 1:
+            if (w.system_appearance_->dark() != false) return false;
+            check(!dark(), "System changes to light without restarting");
+            check(snapshot("system-light"), "System light screenshot");
+            w.theme_.set_selected(1); check(dark(), "explicit Dark");
+            w.theme_.set_selected(0); check(!dark(), "Dark to System uses current light desktop");
+            w.theme_.set_selected(3);
+            check(settings->property_gtk_theme_name() == "HighContrast", "explicit contrast");
+            portal.change(1); ++theme_step; return false;
+        case 2:
+            if (w.system_appearance_->dark() != true) return false;
+            check(settings->property_gtk_theme_name() == "HighContrast", "system change preserves explicit contrast");
+            w.theme_.set_selected(0);
+            check(dark() && settings->property_gtk_theme_name() != "HighContrast" && !high_contrast(), "contrast to System restores current desktop");
+            w.theme_.set_selected(2); check(!dark(), "explicit Light overrides dark desktop");
+            portal.change(2); ++theme_step; return false;
+        case 3:
+            if (w.system_appearance_->dark() != false) return false;
+            portal.change(1); ++theme_step; return false;
+        case 4:
+            if (w.system_appearance_->dark() != true) return false;
+            check(!dark(), "Light survives live desktop changes");
+            w.theme_.set_selected(0); check(dark(), "Light to System uses latest dark desktop");
+            w.stack_.set_visible_child("preferences"); ++theme_step; return false;
+        case 5:
+            check(snapshot("settings-system-dark"), "System settings screenshot");
+            w.stack_.set_visible_child("stream");
+            w.theme_.set_selected(1); portal.change(0); ++theme_step; return false;
+        case 6:
+            if (w.system_appearance_->dark().has_value()) return false;
+            check(dark(), "explicit Dark survives no system preference");
+            w.theme_.set_selected(0);
+            check(!dark(), "no system preference resets native GTK default instead of retaining our Dark override");
+            portal.change(1); ++theme_step; return false;
+        case 7:
+            if (w.system_appearance_->dark() != true) return false;
+            check(dark(), "System resumes after no preference"); ++theme_step; return false;
+        default: return true;
+        }
+    }
     bool finished() const { return step == 9 && !w.server_.running() && w.code_.empty() && w.pin_.empty(); }
     int step = 0, ticks = 0;
     bool snapshot(const char* name) {
@@ -70,6 +145,7 @@ struct ControlUiTest {
     }
     bool tick() {
         check(++ticks < 100, "UI test deadline");
+        if (!check_theme()) return true;
         switch (step) {
         case 0:
             check(!w.server_.running() && !w.settings_.remote_input && w.settings_.fps == 72, "initial view-only defaults");
@@ -77,7 +153,7 @@ struct ControlUiTest {
             check(snapshot("stream"), "initial screenshot");
             w.theme_.set_selected(1); w.text_scale_.set_value(125); w.auto_scroll_.set_active(false);
             check(w.preferences_.theme == "dark" && w.preferences_.text_percent == 125 && !w.preferences_.auto_scroll, "live preferences");
-            w.theme_.set_selected(2); check(!Gtk::Settings::get_default()->property_gtk_application_prefer_dark_theme(), "light theme");
+            w.theme_.set_selected(2); check(!dark(), "light theme");
             w.theme_.set_selected(0); w.text_scale_.set_value(100); w.auto_scroll_.set_active(true);
             w.profile_.set_selected(2);
             check(w.fps_.get_value_as_int() == 90 && w.bitrate_.get_value_as_int() == 12000, "quality preset");
@@ -130,7 +206,7 @@ struct ControlUiTest {
             if (w.server_.running()) break;
             check(w.code_.empty() && w.pin_.empty() && !w.copy_code_.get_sensitive(), "close invalidates pairing UI");
             complete = true;
-            std::cout << "PASS: isolated GUI startup, sources, presets, capability states, private pairing, live input gates, close cancellation, close shutdown\n";
+            std::cout << "PASS: live System theme, explicit overrides, isolated GUI startup, sources, presets, capability states, private pairing, live input gates, close cancellation, close shutdown\n";
             if (auto app = w.get_application()) app->quit();
             return false;
         }
@@ -141,19 +217,19 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--mock-server") return mock_server();
     const auto* display = g_getenv("WAYLAND_DISPLAY"); const auto* config = g_getenv("XDG_CONFIG_HOME");
     check(g_getenv("METUXA_TEST_ISOLATED") && display && std::string(display).rfind("metuxa-test-", 0) == 0 && config && std::string(config).rfind("/tmp/metuxa-ui-", 0) == 0, "requires isolated Weston display and temporary config");
+    FakeSettingsPortal portal;
     auto app = Gtk::Application::create("dev.metuxa.Control.Test", Gio::Application::Flags::NON_UNIQUE);
     std::unique_ptr<MainWindow> window; std::unique_ptr<ControlUiTest> test;
     app->signal_activate().connect([&] {
         window = std::make_unique<MainWindow>();
         if (g_getenv("METUXA_TEST_COMPACT")) window->set_default_size(620, 700);
-        if (g_getenv("METUXA_TEST_DARK")) Gtk::Settings::get_default()->property_gtk_application_prefer_dark_theme() = true;
         app->add_window(*window); window->present();
-        test = std::make_unique<ControlUiTest>(ControlUiTest{*window});
+        test = std::make_unique<ControlUiTest>(ControlUiTest{*window, portal});
         Glib::signal_timeout().connect([&] { return test->tick(); }, 200);
     });
     int result = app->run(1, argv);
     // Window hiding can end GApplication before the next timer; inspect directly.
     check(complete || (test && test->finished()), "close completed without orphaned server or credentials");
-    if (!complete) std::cout << "PASS: isolated GUI startup, sources, presets, capability states, private pairing, live input gates, close cancellation, close shutdown\n";
+    if (!complete) std::cout << "PASS: live System theme, explicit overrides, isolated GUI startup, sources, presets, capability states, private pairing, live input gates, close cancellation, close shutdown\n";
     return result;
 }

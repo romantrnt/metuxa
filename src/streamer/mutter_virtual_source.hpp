@@ -41,9 +41,13 @@ class MutterVirtualSource final : public FrameSource {
 
     bool start(std::string& err) override;
     void stop() override;
-    SourceFormat format() const override { return fmt_; }
+    SourceFormat format() const override { std::lock_guard lock(mu_); return fmt_; }
     int next_frame(AVFrame** out, std::int64_t& pts_usec) override;
     int latest_frame(AVFrame** out, std::int64_t& pts_usec) override;
+
+    display::Source display_source() const override { return display::Source::Virtual; }
+    bool can_set_orientation() const override { return true; }
+    bool resize_desktop(int width, int height, std::string& err) override;
 
     int monitor_idx() const { return monitor_idx_; }
 
@@ -71,7 +75,7 @@ class MutterVirtualSource final : public FrameSource {
     // out_ is a consumer-owned staging buffer the PipeWire thread never
     // touches; next_frame() copies front_ into it so the returned frame stays
     // stable until the next call (see PortalPipeWireSource for the rationale).
-    std::mutex mu_;
+    mutable std::mutex mu_;
     std::condition_variable cv_;
     AVFrame* front_ = nullptr;
     AVFrame* back_ = nullptr;

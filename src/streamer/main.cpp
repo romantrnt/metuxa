@@ -237,6 +237,10 @@ struct Pipeline {
     int index = 0;
     std::unique_ptr<FrameSource> source;
     std::unique_ptr<Encoder> encoder;
+    EncoderConfig encoder_config;
+    // Recursive because broadcast_video can request an IDR synchronously.
+    std::recursive_mutex encoder_mu;
+    std::uint64_t display_generation = 0;
     std::unique_ptr<RtpServer> server;
     std::shared_ptr<app::InputState> input_state;
     bool input_available = false;
@@ -249,6 +253,43 @@ struct Pipeline {
     int abr_kbps = 0;  // current encoder target
     std::chrono::steady_clock::time_point abr_last_down{};
     std::chrono::steady_clock::time_point abr_clean_since{};
+    bool set_orientation(bool portrait) {
+        std::lock_guard lock(encoder_mu);
+        if (!running || !source || source->display_source() != display::Source::Virtual ||
+            !source->can_set_orientation()) return false;
+        const auto before = source->format();
+        int width = 0, height = 0;
+        if (!display::dimensions(before.width, before.height, portrait, width, height)) return false;
+        if (width == before.width && height == before.height) return true;
+        auto config = encoder_config;
+        config.width = width;
+        config.height = height;
+        config.bitrate_kbps = encoder->bitrate_kbps();
+        auto replacement = std::make_unique<Encoder>();
+        std::string error;
+        if (!replacement->open(config, error)) {
+            std::fprintf(stderr, "[monitor %d] orientation encoder unavailable: %s\n", index, error.c_str());
+            return false;
+        }
+        if (!source->resize_desktop(width, height, error)) {
+            std::fprintf(stderr, "[monitor %d] orientation failed: %s\n", index, error.c_str());
+            // A rejected negotiation may still have reached the compositor.
+            // Restore this same virtual source and verify a frame at its old size.
+            if (!source->resize_desktop(before.width, before.height, error)) {
+                std::fprintf(stderr, "[monitor %d] virtual display restore failed; restart sharing: %s\n", index, error.c_str());
+                server->fail_display();
+                running = false; // Fail this monitor closed; leave other monitors alone.
+            }
+            ++display_generation;
+            return false;
+        }
+        encoder.swap(replacement);
+        encoder_config = config;
+        server->update_display_format({width, height, before.fps_num, before.fps_den, encoder->codec()});
+        ++display_generation;
+        return true;
+    }
+
     ~Pipeline() {
         running=false;
         if(thread.joinable())thread.join();
@@ -445,16 +486,10 @@ int main(int argc, char** argv) {
     // The Mutter session must outlive every MutterVirtualSource that references
     // it, so we declare it before the pipelines vector. C++ destroys locals in
     // reverse order, so this is torn down only after all pipelines are gone.
-    // NOTE: the Mutter direct API (org.gnome.Mutter.ScreenCast) is plumbed in
-    // mutter_screencast.cpp, but on stock GNOME user sessions Mutter's internal
-    // PipeWire stream never reaches PW_STREAM_STATE_PAUSED, so
-    // PipeWireStreamAdded is never emitted. The portal path
-    // (xdg-desktop-portal ScreenCast with source_type=VIRTUAL) is the trusted
-    // path that actually works on user sessions — it calls Mutter's
-    // RecordVirtual under the hood from the portal's trusted process. So the
-    // "mutter" source mode uses the portal for both physical and virtual
-    // monitors. The Mutter direct code stays in the tree for future use on
-    // system/headless Mutter where session creation isn't inhibited.
+    // Normal sessions use the desktop portal, including its VIRTUAL source.
+    // The direct Mutter API remains explicitly opt-in and experimental. Its
+    // session/resize lifecycle is tested in an isolated headless compositor;
+    // that does not establish compatibility with the user's GNOME session.
     std::string err;
 #ifdef METASHARE_HAVE_MUTTER
     std::unique_ptr<MutterScreenCastSession> mutter_session;
@@ -463,8 +498,8 @@ int main(int argc, char** argv) {
         std::fprintf(
             stderr,
             "[mutter] attempting direct Mutter ScreenCast (experimental;\n"
-            "  works on system/headless Mutter, usually inhibited on user "
-            "sessions).\n");
+            "  tested on isolated headless Mutter; normal sessions use the "
+            "desktop portal).\n");
         mutter_session = std::make_unique<MutterScreenCastSession>();
         if (!mutter_session->open(err)) {
             std::fprintf(
@@ -580,6 +615,7 @@ int main(int argc, char** argv) {
                          err.c_str());
             status.state("error",err); return 1;
         }
+        p->encoder_config = ecfg;
         const bool is_h265 = (p->encoder->codec() == proto::Codec::kH265);
         std::fprintf(stderr, "[monitor %d] encoder: %s (%s)%s\n", i,
                      p->encoder->codec_name(), is_h265 ? "HEVC" : "H.264",
@@ -598,6 +634,18 @@ int main(int argc, char** argv) {
         vfmt.fps_den = fmt.fps_den;
         vfmt.codec = is_h265 ? proto::Codec::kH265 : proto::Codec::kH264;
         p->server->set_video_format(vfmt);
+        p->server->set_display_source(p->source->display_source(), p->source->can_set_orientation());
+        p->server->on_display_orientation = [raw = p.get(), &status](bool portrait) {
+            std::lock_guard lock(raw->encoder_mu);
+            if (!raw->set_orientation(portrait)) return false;
+            const auto& config = raw->encoder_config;
+            status.emit("{\"type\":\"stream\",\"monitor\":" + std::to_string(raw->index) +
+                        ",\"codec\":" + app::quote(raw->encoder->codec() == proto::Codec::kH265 ? "hevc" : "h264") +
+                        ",\"encoder\":" + app::quote(raw->encoder->codec_name()) +
+                        ",\"width\":" + std::to_string(config.width) + ",\"height\":" + std::to_string(config.height) +
+                        ",\"fps\":" + std::to_string(config.fps_num / std::max(1, config.fps_den)) + "}");
+            return true;
+        };
 #if defined(METASHARE_HAVE_PORTAL) || defined(METASHARE_HAVE_MUTTER)
         // Raw-RTP transport carries a single audio stream; it lives on
         // monitor 0's server (audio is system-wide, so one feed per machine).
@@ -608,8 +656,9 @@ int main(int argc, char** argv) {
 #endif
         // Service client PLI / keyframe requests by forcing the encoder's next
         // frame to be a keyframe.
-        p->server->on_keyframe_request = [enc = p->encoder.get()] {
-            if (enc) enc->force_keyframe();
+        p->server->on_keyframe_request = [raw = p.get()] {
+            std::lock_guard lock(raw->encoder_mu);
+            if (raw->encoder) raw->encoder->force_keyframe();
         };
 
         // Remote input: route this monitor's INPUT events into its own capture
@@ -673,6 +722,7 @@ int main(int argc, char** argv) {
                              raw->index, raw->abr_kbps, next,
                              static_cast<double>(lost) * 100.0);
                 raw->abr_kbps = next;
+                std::lock_guard lock(raw->encoder_mu);
                 raw->encoder->set_bitrate(next);
             }
         };
@@ -709,6 +759,7 @@ int main(int argc, char** argv) {
             // across iterations and re-encode it when the source goes idle.
             AVFrame* last = nullptr;
             std::int64_t last_pts = 0;
+            std::uint64_t display_generation = 0;
 
             // Steady send cadence, decoupled from the compositor's delivery.
             // Mutter's virtual monitors are damage-driven: on_process() fires
@@ -756,6 +807,12 @@ int main(int argc, char** argv) {
                 next_tick += period;
                 auto now = std::chrono::steady_clock::now();
                 if (next_tick < now) next_tick = now + period;  // fell behind
+                std::lock_guard lock(raw->encoder_mu);
+                if (!raw->running) break;
+                if (display_generation != raw->display_generation) {
+                    last = nullptr;
+                    display_generation = raw->display_generation;
+                }
                 // Poll source health even with no connected client. A revoked
                 // portal session must not leave a listening zombie server.
                 AVFrame* frame = nullptr;
@@ -793,6 +850,7 @@ int main(int argc, char** argv) {
                     g_failed=true; g_stop=1; break;
                 }
             }
+            std::lock_guard lock(raw->encoder_mu);
             raw->encoder->flush(sink);
         });
     }

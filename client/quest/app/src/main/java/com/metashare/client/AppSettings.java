@@ -38,6 +38,15 @@ final class AppSettings {
     boolean autoDownloadUpdates() { return preferences.getBoolean("auto_download_updates", false); }
     int rotation(String host, int monitor) { return MonitorGeometry.rotation(preferences.getInt("rotation:" + host + ":" + monitor, 0)); }
     void rotation(String host, int monitor, int value) { integer("rotation:" + host + ":" + monitor, MonitorGeometry.rotation(value)); }
+    int[] streamSize(String host, int monitor) {
+        int width = preferences.getInt("stream_width:" + host + ":" + monitor, 1280);
+        int height = preferences.getInt("stream_height:" + host + ":" + monitor, 720);
+        return width >= 16 && width <= 8192 && height >= 16 && height <= 8192 ? new int[] {width, height} : new int[] {1280, 720};
+    }
+    void streamSize(String host, int monitor, int width, int height) {
+        if (width < 16 || width > 8192 || height < 16 || height > 8192) return;
+        preferences.edit().putInt("stream_width:" + host + ":" + monitor, width).putInt("stream_height:" + host + ":" + monitor, height).apply();
+    }
     void integer(String key, int value) { preferences.edit().putInt(key, value).apply(); }
     void flag(String key, boolean value) { preferences.edit().putBoolean(key, value).apply(); }
     private int bounded(String key, int fallback, int minimum, int maximum) { return Math.max(minimum, Math.min(maximum, preferences.getInt(key, fallback))); }

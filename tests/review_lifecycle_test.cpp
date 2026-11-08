@@ -36,6 +36,60 @@ struct BlockingAudio final : AudioSource {
     }
 };
 #endif
+struct ResizableStub final : FrameSource {
+    SourceFormat current{640,360,30,1};
+    display::Source kind = display::Source::Virtual;
+    int calls = 0;
+    bool reject = false, reject_restore = false;
+    bool start(std::string&) override { assert(false); return false; }
+    void stop() override {}
+    SourceFormat format() const override { return current; }
+    int next_frame(AVFrame**, std::int64_t&) override { assert(false); return -1; }
+    display::Source display_source() const override { return kind; }
+    bool can_set_orientation() const override { return true; } // Backend must check type too.
+    bool resize_desktop(int w, int h, std::string&) override {
+        ++calls;
+        current.width = w; current.height = h; // Partial change even on failure.
+        return !(reject && (calls == 1 || reject_restore));
+    }
+};
+void test_orientation_pipeline() {
+    for (auto kind : {display::Source::Physical, display::Source::Window, display::Source::Unknown,
+                      display::Source::Test, display::Source::Virtual}) {
+        for (int failure = 0; failure < 3; ++failure) {
+            Pipeline pipeline;
+            auto source = std::make_unique<ResizableStub>(); auto raw = source.get();
+            source->kind = kind; source->reject = failure > 0; source->reject_restore = failure > 1;
+            pipeline.source = std::move(source);
+            pipeline.server = std::make_unique<RtpServer>();
+            pipeline.encoder = std::make_unique<Encoder>();
+            pipeline.encoder_config.width = 640; pipeline.encoder_config.height = 360;
+            pipeline.encoder_config.prefer_hardware = false;
+            pipeline.encoder_config.preferred_codec = proto::Codec::kH264;
+            std::string err;
+            assert(pipeline.encoder->open(pipeline.encoder_config, err));
+            pipeline.running = true;
+            if (kind != display::Source::Virtual) {
+                assert(!pipeline.set_orientation(true) && raw->calls == 0);
+                continue;
+            }
+            assert(pipeline.set_orientation(true) == (failure == 0));
+            if (failure == 0) {
+                assert(raw->calls == 1 && raw->current.width == 360 && raw->current.height == 640);
+                assert(pipeline.encoder_config.width == 360 && pipeline.encoder_config.height == 640);
+                assert(pipeline.set_orientation(true) && raw->calls == 1); // Idempotent retry.
+                assert(pipeline.set_orientation(false) && raw->calls == 2);
+            } else {
+                assert(raw->calls == 2 && raw->current.width == 640 && raw->current.height == 360);
+                assert(pipeline.running == (failure == 1));
+                assert(pipeline.encoder_config.width == 640 && pipeline.encoder_config.height == 360);
+            }
+            pipeline.running = false;
+            const int count = raw->calls;
+            assert(!pipeline.set_orientation(true) && raw->calls == count);
+        }
+    }
+}
 void test_input_teardown() {
     std::vector<std::string> order;
     {
@@ -84,7 +138,7 @@ void test_cli_validation() {
 }
 }
 int main() {
-    test_input_teardown(); test_signal_flags(); test_status_backpressure(); test_cli_validation();
+    test_orientation_pipeline(); test_input_teardown(); test_signal_flags(); test_status_backpressure(); test_cli_validation();
 #if defined(METASHARE_HAVE_PORTAL) || defined(METASHARE_HAVE_MUTTER)
     {
         auto audio=std::make_unique<AudioChannel>();

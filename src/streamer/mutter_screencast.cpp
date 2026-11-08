@@ -132,27 +132,12 @@ int MutterScreenCastSession::add_virtual_monitor(int width, int height,
 
     const int idx = static_cast<int>(monitors_.size());
 
-    // RecordVirtual properties (a{sv}):
-    //   "cursor-mode"  : u  = EMBEDDED
-    //   "is-platform"  : b  = true   (treat as a real platform monitor:
-    //                                  panel, fullscreen windows, etc.)
-    //   "modes"        : aa{sv}      one mode with the requested size
-    //
-    // Each mode dict:
-    //   "size"          : (uu)        required
-    //   "is-preferred"  : b           exactly one preferred
-    //   "refresh-rate"  : d           optional; we advertise 60 Hz
-    VarMap mode;
-    mode["size"] = sdbus::Variant(sdbus::Struct<std::uint32_t, std::uint32_t>{
-        static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)});
-    mode["is-preferred"] = sdbus::Variant(true);
-    mode["refresh-rate"] = sdbus::Variant(60.0);
-    std::vector<VarMap> modes = {mode};
-
+    // Leave the mode list unspecified. Mutter then derives this owned
+    // monitor's mode from PipeWire negotiation, including later resizes.
+    // A fixed "modes" list would reject portrait dimensions after startup.
     VarMap props;
     props["cursor-mode"] = sdbus::Variant(kCursorEmbedded);
     props["is-platform"] = sdbus::Variant(true);
-    props["modes"] = sdbus::Variant(modes);
 
     try {
         sdbus::ObjectPath stream_path;
@@ -190,6 +175,10 @@ bool MutterScreenCastSession::start(std::string& err, int timeout_s) {
     // Subscribe to PipeWireStreamAdded on each stream BEFORE calling Start().
     // Mutter emits the signal as streams come up after Start(); we must be
     // listening first.
+    if (!stream_proxies_.empty()) {
+        err = "session has already been started";
+        return false;
+    }
     pending_count_ = static_cast<int>(monitors_.size());
     for (int i = 0; i < static_cast<int>(monitors_.size()); ++i) {
         const int idx = i;  // capture by value
@@ -208,6 +197,7 @@ bool MutterScreenCastSession::start(std::string& err, int timeout_s) {
                 }
             });
         proxy->finishRegistration();
+        stream_proxies_.push_back(std::move(proxy));
     }
 
     // Start the session.
@@ -228,8 +218,8 @@ bool MutterScreenCastSession::start(std::string& err, int timeout_s) {
     err = "timed out waiting for PipeWireStreamAdded (" +
           std::to_string(pending_count_.load()) + " of " +
           std::to_string(monitors_.size()) + " pending). " +
-          "This usually means Mutter is older than GNOME 44 — the direct "
-          "PipeWire connection flow requires GNOME 44+.";
+          "Check compositor policy and the PipeWire session. Normal user "
+          "sessions should use the portal virtual source.";
     return false;
 }
 
@@ -244,8 +234,12 @@ void MutterScreenCastSession::close() {
         } catch (...) {  // NOLINT(bugprone-empty-catch) — best-effort teardown
         }
     }
+    // Stop and join signal dispatch before destroying callback targets.
+    if (conn_) conn_->leaveEventLoop();
+    stream_proxies_.clear();
     session_path_.clear();
     monitors_.clear();
+    pending_count_ = 0;
     conn_.reset();
 }
 

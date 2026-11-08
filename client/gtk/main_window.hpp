@@ -1,6 +1,7 @@
 #pragma once
 #include "control_model.hpp"
 #include "app_preferences.hpp"
+#include "system_appearance.hpp"
 #include "update_manager.hpp"
 #include <atomic>
 #include <thread>
@@ -20,6 +21,7 @@ private:
     void build_ui();
     void build_preferences();
     void apply_preferences();
+    void apply_theme();
     void preferences_changed();
     void save_app_preferences();
     void schedule_update_check();
@@ -62,8 +64,9 @@ private:
     std::shared_ptr<UpdateJob> update_job_;
     std::thread update_thread_;
     metuxa::control::UpdateInfo available_update_;
-    std::string staged_update_, original_theme_;
-    bool original_dark_ = false, preferences_loading_ = false, update_installed_ = false;
+    std::string staged_update_;
+    std::unique_ptr<metuxa::control::SystemAppearance> system_appearance_;
+    bool preferences_loading_ = false, update_installed_ = false;
     Glib::RefPtr<Gtk::CssProvider> text_provider_;
     sigc::connection update_timer_, update_poll_, pairing_timer_;
     std::chrono::steady_clock::time_point pairing_deadline_;

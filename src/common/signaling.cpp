@@ -12,6 +12,8 @@ std::string serialize(const Message& m) {
     case Type::kHello: os << "HELLO " << m.body; break;
     case Type::kReady: os << "READY " << m.body; break;
     case Type::kInput: os << "INPUT " << m.body; break;
+    case Type::kDisplayOrientation: os << "DISPLAY_ORIENTATION " << m.body; break;
+    case Type::kDisplayResult: os << "DISPLAY_RESULT " << m.body; break;
     case Type::kInputState: os << "INPUT_STATE " << m.body; break;
     case Type::kStart: return "START";
     case Type::kBye: return "BYE";
@@ -56,6 +58,15 @@ bool parse(std::string_view line, Message& out) {
     if (cmd == "READY") {
         out.type = Type::kReady;
         out.body = std::string(rest);
+        return true;
+    }
+    if (cmd == "DISPLAY_ORIENTATION") {
+        if (rest != "portrait" && rest != "landscape") return false;
+        out = {Type::kDisplayOrientation, std::string(rest)};
+        return true;
+    }
+    if (cmd == "DISPLAY_RESULT") {
+        out = {Type::kDisplayResult, std::string(rest)};
         return true;
     }
     if (cmd == "INPUT_STATE") {

@@ -19,5 +19,11 @@ final class MonitorGeometry {
             default: return new float[] {x, y};
         }
     }
+    /** Initial panel size in dp, with a bounded long edge and the stream aspect. */
+    static int[] panelSize(int width, int height) {
+        if (width < 16 || height < 16 || width > 8192 || height > 8192) return new int[] {1280, 720};
+        double scale = 1280d / Math.max(width, height);
+        return new int[] {Math.max(360, (int) Math.round(width * scale)), Math.max(225, (int) Math.round(height * scale))};
+    }
     private MonitorGeometry() {}
 }

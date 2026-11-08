@@ -7,8 +7,10 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <future>
 #include <thread>
 #include <sys/socket.h>
+#include <poll.h>
 #include <unistd.h>
 #include <openssl/x509.h>
 using namespace metashare;
@@ -118,6 +120,163 @@ static void rtp_tests(const std::shared_ptr<security::ServerCredentials>& creden
     server.stop();
 }
 
+static void metadata_probe_tests(const std::shared_ptr<security::ServerCredentials>& credentials) {
+    RtpServer server; std::string error;
+    server.set_security(credentials); server.set_video_format({360,640,30,1,proto::Codec::kH264});
+    server.set_audio_enabled(true); server.set_input_enabled(true);
+    std::atomic<int> started{0}, closed{0}, inputs{0}, keyframes{0};
+    server.on_client_state = [&](bool active) { if (active) ++started; else ++closed; };
+    server.on_input = [&](const input::Event&) { ++inputs; };
+    server.on_keyframe_request = [&] { ++keyframes; };
+    require(server.start(0,error), "metadata probe listener");
+    int media=socket(AF_INET,SOCK_DGRAM,0); require(media>=0,"metadata probe media socket");
+    sockaddr_in address{}; address.sin_family=AF_INET; address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+    require(bind(media,reinterpret_cast<sockaddr*>(&address),sizeof(address))==0,"metadata probe media bind");
+    socklen_t address_size=sizeof(address); getsockname(media,reinterpret_cast<sockaddr*>(&address),&address_size);
+    timeval timeout{1,0}; setsockopt(media,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    const std::uint8_t frame[]={0,0,0,1,0x65,0xaa,0xbb,0xcc}, audio[]={0x78,0x45,0x23};
+    std::string probe_hello;
+    {
+        Client probe(server.bound_port()); probe.send("AUTH "+credentials->pairing_code()+"\n");
+        probe_hello=probe.line();
+        require(probe_hello.starts_with("HELLO ") && number(probe_hello,"width")==360 && number(probe_hello,"height")==640,
+                "authenticated metadata-only probe reads actual portrait dimensions");
+        server.broadcast_video(frame,sizeof(frame),0,true);
+        server.broadcast_audio(0,audio,sizeof(audio),0);
+        pollfd wait{media,POLLIN,0};
+        require(poll(&wait,1,80)==0 && server.peer_count()==0 && started==0 && inputs==0 && keyframes==0,
+                "HELLO without READY starts no media, input or streaming callback");
+    }
+    require(eventually([&] { return closed==1 && server.peer_count()==0; }), "metadata probe releases monitor slot");
+    {
+        Client client(server.bound_port()); client.send("AUTH "+credentials->pairing_code()+"\n");
+        const auto hello=client.line();
+        for (const char* key : {"s2c_key", "c2s_key"})
+            require(field(hello,key)!=field(probe_hello,key), "normal stream receives fresh keys after metadata probe");
+        client.send("READY {\"port\":"+std::to_string(ntohs(address.sin_port))+"}\n");
+        require(client.line()=="START" && client.line()=="INPUT_STATE true", "normal READY succeeds after metadata probe");
+        require(eventually([&] { return started==1 && server.peer_count()==1 && keyframes==1; }),
+                "only full stream reports connected");
+        server.broadcast_video(frame,sizeof(frame),33333,true);
+        std::uint8_t wire[2048]; const auto size=recv(media,wire,sizeof(wire),0);
+        security::MediaCipher current, previous;
+        require(current.configure(field(hello,"s2c_key"),field(hello,"s2c_prefix"),1) &&
+                previous.configure(field(probe_hello,"s2c_key"),field(probe_hello,"s2c_prefix"),1), "probe media ciphers");
+        std::vector<std::uint8_t> plain;
+        require(size>32 && current.open(wire,size,plain) && !previous.open(wire,size,plain),
+                "subsequent media uses new session, not stale probe keys");
+        require(inputs==0, "metadata probe and reconnect inject no input");
+    }
+    require(eventually([&] { return closed==2 && server.peer_count()==0; }), "normal stream cleans up after metadata probe");
+    server.stop(); close(media);
+}
+
+static void display_tests(const std::shared_ptr<security::ServerCredentials>& credentials) {
+    for (auto source : {display::Source::Physical, display::Source::Window, display::Source::Unknown,
+                        display::Source::Test, display::Source::Virtual}) {
+        RtpServer server; std::string error; std::atomic<int> changes{0}, inputs{0};
+        server.set_security(credentials); server.set_video_format({640,360,30,1,proto::Codec::kH264});
+        server.set_display_source(source, true); // Invalid capability on physical must stay false.
+        server.set_input_enabled(true); server.on_input = [&](const input::Event&) { ++inputs; };
+        server.on_display_orientation = [&](bool portrait) {
+            require(portrait, "portrait request passed correctly"); ++changes;
+            server.update_display_format({360,640,30,1,proto::Codec::kH264}); return true;
+        };
+        require(server.start(0,error), "display test listener");
+        {
+            Client client(server.bound_port()); client.send("AUTH "+credentials->pairing_code()+"\n");
+            auto hello = client.line();
+            const bool virtual_source = source == display::Source::Virtual;
+            require(hello.find(virtual_source ? "\"orientation\":true" : "\"orientation\":false") != std::string::npos,
+                    "source-verified orientation capability");
+            client.send("READY {\"port\":12345}\n");
+            require(client.line()=="START" && client.line()=="INPUT_STATE true", "orientation starts authenticated stream");
+            client.send("DISPLAY_ORIENTATION portrait\n");
+            require(client.line() == (virtual_source ? "DISPLAY_RESULT ok 360 640" : "DISPLAY_RESULT unsupported"), "orientation result");
+            if (virtual_source) {
+                require(server.peer_count()==0 && changes==1, "media paused until reconnect");
+                client.send("DISPLAY_ORIENTATION landscape\nINPUT k 65 1\nPING\n");
+                require(client.line()=="DISPLAY_RESULT busy" && client.line()=="PING" && client.line()=="INPUT_STATE true", "repeated request rejected");
+                require(inputs==0 && changes==1, "no stale input or queued second resize");
+            } else require(changes==0 && server.peer_count()==1, "physical source cannot mutate");
+        }
+        {
+            Client client(server.bound_port()); client.send("AUTH "+credentials->pairing_code()+"\n");
+            auto hello=client.line();
+            require(number(hello,"width")==(source==display::Source::Virtual ? 360u : 640u), "reconnect HELLO effective dimensions");
+            client.send("DISPLAY_ORIENTATION portrait\n");
+            require(client.line().empty(), "orientation before READY refused");
+        }
+        server.stop();
+    }
+    {
+        RtpServer server; std::string error; std::atomic<int> attempts{0};
+        server.set_security(credentials); server.set_video_format({640,360,30,1,proto::Codec::kH264});
+        server.set_display_source(display::Source::Virtual,true);
+        server.on_display_orientation = [&](bool) { ++attempts; return false; };
+        require(server.start(0,error), "failed resize listener");
+        {
+            Client client(server.bound_port()); client.send("AUTH "+credentials->pairing_code()+"\n"); client.line();
+            client.send("READY {\"port\":12345}\n"); client.line(); client.line();
+            client.send("DISPLAY_ORIENTATION portrait\n");
+            require(client.line()=="DISPLAY_RESULT failed" && attempts==1 && server.peer_count()==0,
+                    "failure requires reconnect, not stale media");
+        }
+        {
+            Client client(server.bound_port()); client.send("AUTH "+credentials->pairing_code()+"\n");
+            require(number(client.line(),"width")==640, "restored dimensions after failed resize");
+            client.send("READY {\"port\":12345}\n"); client.line(); client.line();
+            client.send("DISPLAY_ORIENTATION portrait\n");
+            require(client.line()=="DISPLAY_RESULT busy" && attempts==1, "resize rate limited across reconnects");
+        }
+        server.stop();
+    }
+    {
+        RtpServer server; std::string error; std::atomic<int> attempts{0};
+        server.set_security(credentials); server.set_video_format({640,360,30,1,proto::Codec::kH264});
+        server.set_display_source(display::Source::Virtual,true);
+        server.on_display_orientation = [&](bool) {
+            ++attempts; server.fail_display(); return false; // Both resize and restoration failed.
+        };
+        require(server.start(0,error), "unrecoverable resize listener");
+        {
+            Client client(server.bound_port()); client.send("AUTH "+credentials->pairing_code()+"\n"); client.line();
+            client.send("READY {\"port\":12345}\n"); client.line(); client.line();
+            client.send("DISPLAY_ORIENTATION portrait\n");
+            require(client.line()=="DISPLAY_RESULT restart_required", "explicit recovery result after failed restoration");
+            require(client.line().empty() && attempts==1 && server.peer_count()==0,
+                    "failed monitor closes after recovery message without media");
+        }
+        {
+            Client client(server.bound_port()); client.send("AUTH "+credentials->pairing_code()+"\n");
+            require(client.line().empty() && attempts==1, "unrecoverable monitor cannot resume stale dimensions");
+        }
+        server.stop();
+    }
+    // A disconnect during an accepted request cannot enqueue work for a later peer.
+    RtpServer server; std::string error; std::promise<void> entered, finish;
+    auto finished = finish.get_future();
+    server.set_security(credentials); server.set_video_format({640,360,30,1,proto::Codec::kH264});
+    server.set_display_source(display::Source::Virtual,true);
+    server.on_display_orientation = [&](bool) {
+        entered.set_value(); finished.wait();
+        server.update_display_format({360,640,30,1,proto::Codec::kH264}); return true;
+    };
+    require(server.start(0,error), "disconnect resize listener");
+    {
+        Client client(server.bound_port()); client.send("AUTH "+credentials->pairing_code()+"\n"); client.line();
+        client.send("READY {\"port\":12345}\n"); client.line(); client.line();
+        client.send("DISPLAY_ORIENTATION portrait\n");
+        require(entered.get_future().wait_for(2s)==std::future_status::ready, "accepted resize entered");
+    }
+    finish.set_value();
+    {
+        Client client(server.bound_port()); client.send("AUTH "+credentials->pairing_code()+"\n");
+        auto hello=client.line(); require(number(hello,"width")==360 && number(hello,"height")==640, "disconnect reconnect waits for settled format");
+    }
+    server.stop();
+}
+
 int main(int argc,char** argv) {
     std::string error;
     auto credentials=security::ServerCredentials::create(error);
@@ -153,6 +312,8 @@ int main(int argc,char** argv) {
     require(!signal::parse("INPUT_STATE yes",state), "invalid input state parse");
     crypto_tests();
     rtp_tests(credentials);
+    display_tests(credentials);
+    metadata_probe_tests(credentials);
     {
         int fd=connect_tcp(server.bound_port());
         const char* plain="READY {\"port\":9}\n"; send(fd,plain,strlen(plain),MSG_NOSIGNAL); shutdown(fd,SHUT_WR);

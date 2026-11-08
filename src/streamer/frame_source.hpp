@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <string>
+#include "display_control.hpp"
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -69,6 +70,15 @@ class FrameSource {
     // remote input into the captured desktop. Valid after a successful
     // start(); the returned sink is owned by the source.
     virtual InputSink* input_sink() { return nullptr; }
+
+    virtual display::Source display_source() const { return display::Source::Unknown; }
+    virtual bool can_set_orientation() const { return false; }
+    // Changes only an owned virtual desktop. Returns after a matching frame,
+    // never just after queuing negotiation. The caller serializes with pulls.
+    virtual bool resize_desktop(int, int, std::string& err) {
+        err = "This captured source does not support desktop orientation";
+        return false;
+    }
 };
 
 }  // namespace metashare

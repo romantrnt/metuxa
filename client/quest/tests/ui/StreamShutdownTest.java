@@ -28,6 +28,13 @@ public class StreamShutdownTest {
         });
     }
 
+    @Test public void orientationRollbackFailureStopsReconnect() {
+        StreamSession session = session(); ReflectionHelpers.setField(session, "running", true); ReflectionHelpers.setField(session, "explicitReconnect", true);
+        DesktopOrientation orientation = ReflectionHelpers.getField(session, "orientation"); orientation.open("virtual", true); assertTrue(orientation.request(true)); orientation.claim(1);
+        boolean finish = ReflectionHelpers.callInstanceMethod(session, "handleDisplayResult", ReflectionHelpers.ClassParameter.from(DesktopOrientation.Result.class, DesktopOrientation.parse("DISPLAY_RESULT restart_required")));
+        assertTrue(finish); assertFalse(ReflectionHelpers.getField(session, "running")); assertFalse(ReflectionHelpers.getField(session, "explicitReconnect")); assertFalse(orientation.pending());
+    }
+
     @Test public void stoppingAnActiveTlsSessionNeverClosesOnTheActivityThread() throws Exception {
         Thread activityThread = Thread.currentThread();
         CountDownLatch entered = new CountDownLatch(1), allowClose = new CountDownLatch(1), cleaned = new CountDownLatch(1);

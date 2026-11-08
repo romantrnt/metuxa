@@ -99,6 +99,10 @@ class PortalPipeWireSource final : public FrameSource, public InputSink {
     // exactly the surface this source captures.
     InputSink* input_sink() override;
 
+    display::Source display_source() const override { return display::portal_source(source_type_); }
+    bool can_set_orientation() const override { return display::owns_virtual(opts_.source_types, source_type_); }
+    bool resize_desktop(int width, int height, std::string& err) override;
+
     // --- InputSink (safe from the signaling thread; fire-and-forget) --------
     void pointer_motion(double nx, double ny) override;
     void pointer_button(int evdev_button, bool pressed) override;
@@ -129,6 +133,7 @@ class PortalPipeWireSource final : public FrameSource, public InputSink {
 
     SourceFormat fmt_{};
     PortalOptions opts_;
+    std::uint32_t source_type_ = 0;
     std::unique_ptr<PortalState> portal_;
 
     pw_thread_loop* loop_ = nullptr;

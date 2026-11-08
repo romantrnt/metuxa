@@ -10,23 +10,14 @@
 //       portal shows a one-time dialog asking the user to confirm creating a
 //       virtual monitor. Under the hood, the portal calls Mutter's
 //       RecordVirtual — same API as mutter-direct below — but the portal is
-//       trusted by Mutter so it bypasses Mutter's "session creation inhibited"
-//       policy that blocks external apps from calling ScreenCast directly on
-//       user sessions.
+//       responsible for the user-consent flow. Direct compositor APIs are
+//       implementation-specific and are not a substitute for that consent.
 //
 //   --mode mutter-direct
-//       Talks to org.gnome.Mutter.ScreenCast directly. Cleaner API, no dialog,
-//       supports N virtual monitors in one session. BUT: on a stock GNOME user
-//       session, GNOME Shell sets session_creation_inhibited=TRUE, forcing
-//       apps through the portal. This mode only works in:
-//         * gnome-remote-desktop system / headless mode (its own Mutter)
-//         * A patched Mutter / GNOME Shell that doesn't inhibit
-//         * Future Mutter versions if the policy changes
-//
-//   --mode portal-monitor
-//       Pick an existing monitor via the portal dialog (no virtual monitor
-//       created). Useful for sanity-checking capture without virtual-monitor
-//       creation.
+//       Talks to org.gnome.Mutter.ScreenCast directly. This experimental path
+//       depends on compositor policy and the active PipeWire session. Normal
+//       desktop sharing uses the portal and its user-consent flow. Automated
+//       tests of the direct path run only in an isolated headless compositor.
 
 #include <chrono>
 #include <cstdio>

@@ -21,6 +21,24 @@ public final class MonitorUiTests {
         }
         check(MonitorGeometry.fit(0,100,1920,1080,0)[0] == 0);
         check(MonitorGeometry.rotation(23) == 0);
+        check(java.util.Arrays.equals(MonitorGeometry.panelSize(1920, 1080), new int[] {1280, 720}));
+        check(java.util.Arrays.equals(MonitorGeometry.panelSize(1080, 1920), new int[] {720, 1280}));
+        check(java.util.Arrays.equals(MonitorGeometry.panelSize(1920, 1200), new int[] {1280, 800}));
+        check(java.util.Arrays.equals(MonitorGeometry.panelSize(-1, 0), new int[] {1280, 720}));
+        DesktopOrientation orientation = new DesktopOrientation();
+        check(!orientation.request(true)); orientation.open("physical", true); check(!orientation.request(true));
+        orientation.open("virtual", false); check(!orientation.request(true)); orientation.open("virtual", true);
+        check(orientation.request(true)); check(!orientation.request(false)); check(orientation.pending()); check(!orientation.awaitingResult());
+        check("DISPLAY_ORIENTATION portrait".equals(orientation.claim(100))); check(orientation.claim(101) == null); check(orientation.awaitingResult());
+        check(!orientation.expired(12_000_000_099L)); check(orientation.expired(12_000_000_100L)); orientation.complete();
+        check(!orientation.pending()); check(orientation.request(false)); orientation.close(); check(orientation.claim(200) == null);
+        check(!orientation.request(true));
+        DesktopOrientation.Result result = DesktopOrientation.parse("DISPLAY_RESULT ok 1080 1920");
+        check(result.width == 1080 && result.height == 1920 && "ok".equals(result.status));
+        for (String value : new String[] {"unsupported", "busy", "failed", "restart_required"}) check(value.equals(DesktopOrientation.parse("DISPLAY_RESULT " + value).status));
+        for (String invalid : new String[] {"DISPLAY_RESULT", "DISPLAY_RESULT ok 0 1", "DISPLAY_RESULT ok 8193 1920", "DISPLAY_RESULT ok -100 100", "DISPLAY_RESULT ok 100 200 extra", "DISPLAY_RESULT unsupported extra", "DISPLAY_RESULT ok 1e3 1920", "DISPLAY_RESULT untrusted"}) {
+            boolean rejected = false; try { DesktopOrientation.parse(invalid); } catch (IllegalArgumentException expected) { rejected = true; } check(rejected);
+        }
         PanelVisibility p = new PanelVisibility();
         p.mode(PanelVisibility.AUTO_HIDE); p.reveal(100,4000);
         check(p.visible(100)); check(p.timed(4099)); check(!p.visible(4100));

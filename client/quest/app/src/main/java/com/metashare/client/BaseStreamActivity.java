@@ -25,7 +25,7 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
     private FrameLayout viewport;
     private PanelOverlay root;
     private AppSettings settings;
-    private int rotation, appliedTheme, appliedScale, appliedUiMode;
+    private int appliedTheme, appliedScale, appliedUiMode;
     private TextView status;
     private QuestToolbar toolbar;
     private AlertDialog settingsDialog;
@@ -33,7 +33,8 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
     private StreamSession stream;
     private long generation, streamEpoch;
     private int monitorIndex, streamWidth, streamHeight;
-    private boolean surfaceReady, destroyed, registered, inputAvailable, refreshingTheme;
+    private boolean surfaceReady, destroyed, registered, inputAvailable, refreshingTheme, orientationSupported, orientationPending;
+    private String displaySource = "unknown", displayFailure;
     abstract boolean primary();
     @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(QuestUi.themedContext(base)); }
     @Override protected void onCreate(Bundle state) {
@@ -44,14 +45,15 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
         if (!coordinator.matches(generation) || monitorIndex < 0 || monitorIndex > 2 || !primary() && (monitorIndex == 0 || monitorIndex >= Math.min(connection.desiredMonitors, connection.availableMonitors))) { finish(); return; }
         for (BaseStreamActivity other : ACTIVE) if (other.generation == generation && other.monitorIndex == monitorIndex && !other.isFinishing()) { finish(); return; }
         registered = true; ACTIVE.add(this); LAUNCHING.remove(monitorIndex); coordinator.register(this);
+        int[] remembered = settings.streamSize(connection.endpoint.key(), monitorIndex);
+        PanelWindow.followStream(this, remembered[0], remembered[1]);
         applyKeepAwake();
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         root = new PanelOverlay(this, () -> { if (input != null) input.lostFocus(); }); root.setBackgroundColor(QuestUi.color(this, R.color.quest_background)); root.setFocusableInTouchMode(true);
         viewport = new FrameLayout(this); viewport.setBackgroundColor(android.graphics.Color.BLACK);
         FrameLayout.LayoutParams viewportParams = new FrameLayout.LayoutParams(-1, -1);
         root.addView(viewport, viewportParams);
-        rotation = settings.rotation(connection.endpoint.key(), monitorIndex);
-        surface = new RemoteSurfaceView(this); surface.setMonitorRotation(rotation); surface.setRenderListener(this); surface.setFocusableInTouchMode(true); surface.setContentDescription("Remote monitor " + (monitorIndex + 1) + " on " + connection.endpoint.key());
+        surface = new RemoteSurfaceView(this); surface.setRenderListener(this); surface.setFocusableInTouchMode(true); surface.setContentDescription("Remote monitor " + (monitorIndex + 1) + " on " + connection.endpoint.key());
         viewport.addView(surface, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
         status = QuestUi.text(this, "", 13, QuestUi.color(this, R.color.quest_muted)); status.setMaxLines(3); status.setBackgroundColor(QuestUi.color(this, R.color.quest_panel)); status.setGravity(Gravity.CENTER_VERTICAL); status.setPadding(QuestUi.dp(this, 16), QuestUi.dp(this, 6), QuestUi.dp(this, 152), QuestUi.dp(this, 6)); status.setClickable(true); status.setMinHeight(QuestUi.dp(this, 64)); status.setEllipsize(android.text.TextUtils.TruncateAt.END);
         root.addView(status, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
@@ -66,9 +68,9 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
                 showSettings();
             }
             public void onDisconnectRequested() { requestDisconnect(); }
-            public void onRotateRequested() { rotateMonitor(); }
+            public void onOrientationRequested() { chooseOrientation(); }
         });
-        toolbar.setRotation(rotation); root.panels(status, toolbar.view());
+        toolbar.setOrientation(0, 0, false); root.panels(status, toolbar.view());
         setContentView(root); root.requestFocus(); viewport.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> applyAspectRatio());
         showStatus("Connecting securely…"); policyChanged();
     }
@@ -78,15 +80,24 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
         stream = new StreamSession(this, surface, monitorIndex, new StreamSession.Listener() {
             private boolean current() { return !destroyed && epoch == streamEpoch && coordinator.matches(generation); }
             public void onStatus(String text) { runOnUiThread(() -> { if (current()) showStatus(text == null || text.isEmpty() ? streamingStatus() : text); }); }
-            public void onStreamSize(int width, int height) { runOnUiThread(() -> { if (current()) { streamWidth = width; streamHeight = height; applyAspectRatio(); } }); }
+            public void onStreamSize(int width, int height) { runOnUiThread(() -> { if (current()) { updateStreamSize(width, height); } }); }
+            public void onDisplayCapability(String source, boolean supported) { runOnUiThread(() -> {
+                if (!current()) return; displaySource = source; orientationSupported = supported;
+                toolbar.setOrientation(streamWidth, streamHeight, orientationPending);
+            }); }
+            public void onDisplayResult(String result, int width, int height) { runOnUiThread(() -> {
+                if (!current()) return;
+                displayResult(result, width, height);
+            }); }
             public void onAvailableMonitors(int count) { runOnUiThread(() -> { if (current() && primary()) { connection.availableMonitors = Math.max(1, Math.min(3, count)); updateMonitors(); } }); }
             public void onConnected() { runOnUiThread(() -> {
-                if (!current()) return; forwarder.connected();
+                if (!current()) return; displayFailure = null; forwarder.connected();
                 if (primary()) { connection.connected = true; updateMonitors(); }
                 showStatus(streamingStatus());
             }); }
             public void onDisconnected() { runOnUiThread(() -> {
                 if (!current()) return; input.lostFocus(); forwarder.disconnected();
+                orientationPending = false; orientationSupported = false; toolbar.setOrientation(streamWidth, streamHeight, false);
                 if (primary()) connection.connected = false;
             }); }
             public void onInputCapability(boolean enabled) { runOnUiThread(() -> {
@@ -122,13 +133,15 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
             if (present || LAUNCHING.contains(i)) continue;
             LAUNCHING.add(i); Intent intent = new Intent(this, MonitorActivity.class);
             intent.putExtra("generation", generation); intent.putExtra("monitor_index", i); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
-            try { startActivity(intent); } catch (RuntimeException e) { LAUNCHING.remove(i); showStatus("This Quest could not open another window. The main stream remains available."); }
+            int[] size = settings.streamSize(connection.endpoint.key(), i);
+            try { startActivity(intent, PanelWindow.launchOptions(this, size[0], size[1])); } catch (RuntimeException e) { LAUNCHING.remove(i); showStatus("This Quest could not open another window. The main stream remains available."); }
         }
         toolbar.setScreenCount(count, connection.availableMonitors);
     }
     private String streamingStatus() { return inputAvailable ? "Connected" : "Connected · remote input is off on the PC"; }
     private void showStatus(String text) {
         if (status == null || connection == null) return;
+        if (displayFailure != null) text = displayFailure;
         String message = "metuxa  /  " + connection.endpoint.key() + "  /  monitor " + (monitorIndex + 1) + "\n" + text;
         status.setText(message);
         if (primary()) coordinator.lastStatus = text;
@@ -137,7 +150,7 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
         if (viewport == null || surface == null) return;
         int width = viewport.getWidth(), height = viewport.getHeight();
         if (width <= 0 || height <= 0 || streamWidth <= 0 || streamHeight <= 0) return;
-        int[] size = MonitorGeometry.fit(width, height, streamWidth, streamHeight, rotation);
+        int[] size = MonitorGeometry.fit(width, height, streamWidth, streamHeight, 0);
         int w = size[0], h = size[1];
         FrameLayout.LayoutParams old = (FrameLayout.LayoutParams) surface.getLayoutParams();
         if (old.width != w || old.height != h) surface.setLayoutParams(new FrameLayout.LayoutParams(w, h, Gravity.CENTER));
@@ -146,10 +159,45 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
         if (settings.keepAwake()) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
-    private void rotateMonitor() {
-        input.lostFocus(); rotation = (rotation + 90) % 360;
-        settings.rotation(connection.endpoint.key(), monitorIndex, rotation);
-        surface.setMonitorRotation(rotation); applyAspectRatio(); toolbar.setRotation(rotation); root.reveal();
+    private void displayResult(String result, int width, int height) {
+        orientationPending = false; toolbar.setOrientation(streamWidth, streamHeight, false);
+        if ("restart_required".equals(result)) {
+            displayFailure = "This virtual display could not be restored. Stop and start sharing on the PC, then pair again.";
+            orientationSupported = false; showStatus(displayFailure);
+        } else if ("ok".equals(result)) { updateStreamSize(width, height); showStatus("Desktop orientation changed. Reconnecting…"); }
+        else showStatus("busy".equals(result) ? "The PC is already changing this display. Try again shortly."
+            : "unsupported".equals(result) ? "This source follows the PC. Use a virtual monitor for independent portrait."
+            : "timeout".equals(result) ? "The display change timed out. Reconnecting to check its current orientation…"
+            : "The PC could not change orientation. Reconnecting to check its current display size…");
+    }
+    private void updateStreamSize(int width, int height) {
+        if (width < 16 || width > 8192 || height < 16 || height > 8192) return;
+        streamWidth = width; streamHeight = height;
+        settings.streamSize(connection.endpoint.key(), monitorIndex, width, height);
+        PanelWindow.followStream(this, width, height);
+        applyAspectRatio(); toolbar.setOrientation(width, height, orientationPending);
+    }
+    private void chooseOrientation() {
+        input.lostFocus();
+        if (!orientationSupported) {
+            String explanation = "physical".equals(displaySource)
+                ? "This panel mirrors the physical monitor exactly. Its orientation follows the PC. Add a virtual monitor for an independent portrait desktop."
+                : "window".equals(displaySource) ? "This panel follows the shared PC window. Resize that window on the PC, or add a virtual monitor for an independent portrait desktop."
+                : "The PC has not offered independent orientation for this source. Only metuxa virtual monitors can change orientation here. Physical monitors always follow the PC.";
+            new AlertDialog.Builder(this).setTitle("Desktop orientation").setMessage(explanation)
+                .setPositiveButton("Done", null).show(); return;
+        }
+        if (orientationPending) { showStatus("Waiting for the PC to change this virtual monitor…"); return; }
+        new AlertDialog.Builder(this).setTitle("Virtual desktop orientation")
+            .setSingleChoiceItems(new String[] {"Landscape", "Portrait"}, streamHeight > streamWidth ? 1 : 0, (dialog, selected) -> {
+                dialog.dismiss();
+                if ((selected == 1) == (streamHeight > streamWidth)) return;
+                input.lostFocus();
+                if (stream != null && stream.requestOrientation(selected == 1)) {
+                    orientationPending = true; toolbar.setOrientation(streamWidth, streamHeight, true);
+                    showStatus("Changing virtual desktop orientation on the PC…");
+                } else showStatus("Desktop orientation is not available right now. Wait for the connection and try again.");
+            }).setNegativeButton("Cancel", null).show();
     }
     private void showSettings() {
         input.lostFocus();
@@ -175,7 +223,7 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
     }
     private void openLauncher(boolean updates) {
         Intent i = new Intent(this, MainActivity.class); i.putExtra("manage", true); i.putExtra("updates", updates);
-        i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT); startActivity(i);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT); startActivity(i);
     }
     private void requestDisconnect() {
         input.lostFocus();

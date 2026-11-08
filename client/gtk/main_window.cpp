@@ -47,8 +47,9 @@ MainWindow::MainWindow() {
     settings_ = load_settings(settings_path(), warning);
     preferences_ = load_preferences(preferences_path());
     dialogs_cancel_ = Gio::Cancellable::create();
-    auto gtk_settings = Gtk::Settings::get_default();
-    original_theme_ = gtk_settings->property_gtk_theme_name().get_value().raw(); original_dark_ = gtk_settings->property_gtk_application_prefer_dark_theme();
+    system_appearance_ = std::make_unique<SystemAppearance>([this] {
+        if (preferences_.theme == "system") apply_theme();
+    });
     build_ui(); build_preferences(); load_widgets(); apply_preferences();
     if (preferences_.remember_window) set_default_size(preferences_.window_width, preferences_.window_height);
     if (!warning.empty()) append_log(warning);
@@ -60,6 +61,7 @@ MainWindow::MainWindow() {
     clear_security(); update_actions(); schedule_update_check();
 }
 MainWindow::~MainWindow() {
+    system_appearance_.reset();
     log_timer_.disconnect(); save_timer_.disconnect(); startup_timer_.disconnect(); dialogs_cancel_->cancel();
     update_timer_.disconnect(); update_poll_.disconnect(); pairing_timer_.disconnect();
     if (update_job_) update_job_->cancel = true;

@@ -33,18 +33,34 @@ image is installed.
 
 ## Coverage and output
 
-Twelve test cases cover:
+Twenty-one test cases cover:
 
 - Launcher layouts at 1200 × 1000, 480 × 1000, and 360 × 800 with 150% font.
 - Wide → narrow → wide resizing, minimum touch targets, label height and gaps.
-- Full remote, Keyboard only and View only presets and persisted effective state.
+- The last launcher section and last settings control remain reachable by
+  scrolling, including the 360dp/150% font layout.
+- Full remote, Keyboard only and View only presets, native switches, persisted
+  effective state, and expandable advanced sections.
 - Dark/light/system settings, day/night changes and form retention through recreation.
-- Per-monitor rotation persistence and inverse Android touch/hover at four angles on the TextureView renderer. These tests do not decode video or prove rotated pixel output.
+- Legacy image-rotation preferences are ignored by a real StreamActivity;
+  authenticated dimensions request portrait/landscape without tilting the View.
+- Physical-source explanation, virtual orientation dialog cancellation, per-PC
+  size persistence, bounded launch hints and native settings-row menus.
+- The renderer's existing inverse Android touch/hover transform at four angles.
+  This is a low-level regression test, not an exposed image-rotation feature.
+  These tests do not decode video or prove Horizon panel sizing.
 - Overlay timing, pinned Controls handle, local focus release, return to remote typing and the fixed More menu.
+- Metadata probe parsing, AUTH-only output, background close-before-callback,
+  cancellation, expiry fallback, duplicate starts, stale generation suppression,
+  and returning to an active stream without a probe. Probe tests use fake TLS
+  sockets and never connect to a server.
+- Persistent display-rollback failure guidance and stopped reconnect state.
+- Rounded toolbar background and configured opacity in the actual overlay.
 - Production StreamSession.stop with blocking test sockets: no close on the caller/UI thread, duplicate shutdown, and isolation from replacement sockets.
 - Forget cancellation, pointer-device information, diagnostics Reset/Close.
 - Toolbar callbacks, disabled keyboard state and visible fixed Disconnect at
-  800 px and 360 px/150% font, without a connected media session. Native mouse cursor positions are stubbed by Robolectric, so the hover matrix test uses stylus-source coordinates.
+  800 px and 360 px/150% font, without a connected media session. The stream Activity orientation test is
+  created without attaching its TextureView, so it cannot start a media session. Native mouse cursor positions are stubbed by Robolectric, so the hover matrix test uses stylus-source coordinates.
 
 PNG renders are written to `client/quest/app/build/ui-qa/screenshots/`; JUnit
 reports are in the standard `app/build/reports/tests/testDebugUnitTest/` folder.
