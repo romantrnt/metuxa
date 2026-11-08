@@ -1,7 +1,8 @@
 # Quest stable-label verification
 
-Checked on 2026-11-08 against the post-0.4.0 source fix. This is a local source
-verification, not a new release or a physical-headset acceptance result.
+Checked on 2026-11-08 against source-fix commit `55a1661`, before 0.4.1 release preparation. This is a local source
+verification, not a new release or a physical-headset acceptance result. The subsequent
+[0.4.1 release record](VERIFICATION-0.4.1.md) covers release preparation.
 
 ## Passed
 

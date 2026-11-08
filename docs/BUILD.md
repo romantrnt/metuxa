@@ -66,7 +66,7 @@ This checks real virtual-monitor mode changes and session cleanup, without
 capturing the user's desktop. It does not validate the portal picker, a physical
 Quest, or Horizon window behavior.
 
-Synthetic streaming tests use a separate network namespace, software encoding, test-pattern/test-tone sources, and no access to the user's display, session bus or PipeWire devices. They do not establish real portal, GPU or Quest behavior. Current results are in [0.4.0 verification](VERIFICATION-0.4.0.md); physical-device checks are in [Manual tests](MANUAL-TESTS.md).
+Synthetic streaming tests use a separate network namespace, software encoding, test-pattern/test-tone sources, and no access to the user's display, session bus or PipeWire devices. They do not establish real portal, GPU or Quest behavior. Current results are in [0.4.1 verification](VERIFICATION-0.4.1.md); physical-device checks are in [Manual tests](MANUAL-TESTS.md).
 
 ## Release packaging
 

@@ -1,6 +1,6 @@
 # Signed GitHub updates
 
-Version 0.3.0 can check for and download the signed 0.4.0 update; installation remains explicit. Version 0.2.0 has no updater, so install 0.4.0 manually from that version, using the official APK with the same signing identity or replacing the AppImage. Do not uninstall the Android app: a normal signed update keeps settings and pairing data. Debug-signed installations cannot accept production updates.
+Versions 0.3.0 and 0.4.0 can check for and download the signed 0.4.1 update; installation remains explicit. Version 0.2.0 has no updater, so install 0.4.1 manually from that version, using the official APK with the same signing identity or replacing the AppImage. Do not uninstall the Android app: a normal signed update keeps settings and pairing data. Debug-signed installations cannot accept production updates.
 
 Both clients retrieve `https://github.com/romantrnt/metuxa/releases/latest/download/update-manifest.txt`. GitHub supplies hosting and TLS; the existing metuxa release key authenticates the manifest independently. The public key is in `data/update-public-key.pem`. Private signing files stay outside the checkout. New signing identities or key rotation require a reviewed app release and are not accepted through a downloaded manifest.
 
@@ -8,8 +8,8 @@ The envelope starts with one standard Base64 RSA/SHA-256 PKCS#1 v1.5 signature l
 
 ```text
 metuxa-update-v1
-version=0.4.0
-version_code=5
+version=0.4.1
+version_code=6
 protocol_min=5
 protocol_max=5
 android_size=123
@@ -41,7 +41,7 @@ still in Unknown Sources while the running window showed 0.4.0. This is consiste
 with a stale Horizon library entry; it is not evidence that the APK failed to
 update. That particular headset cache has not been inspected directly.
 
-New source builds separate persistent identity from runtime version text:
+Version 0.4.1 separates persistent identity from runtime version text:
 
 - `@string/app_name` is the fixed, non-translatable `metuxa` application label.
   Activities and launcher intent filters inherit it without a version override.
@@ -50,9 +50,9 @@ New source builds separate persistent identity from runtime version text:
   window title.
   Check the in-app version or Android's installed-package version, not an old
   Unknown Sources label. Horizon may ignore the requested window title.
-- The package ID, launcher component, signing identity, version/code and stored
-  preferences are unchanged by this source fix. No alias rotation, component
-  disabling, uninstall, data clear or Home restart is used to force a refresh.
+- The package ID, launcher component, signing identity and stored preferences
+  remain unchanged. Version 0.4.1 uses code 6; stream protocol remains 5. No alias
+  rotation, component disabling, uninstall, data clear or Home restart is used to force a refresh.
 
 Android documents [Activity-label inheritance](https://developer.android.com/guide/topics/manifest/activity-element#label)
 and [intent-filter-label inheritance](https://developer.android.com/guide/topics/manifest/intent-filter-element#label).
@@ -61,8 +61,8 @@ No documented app-level guarantee of an immediate Horizon refresh was found.
 The stable label prevents future release numbers from becoming stale once the
 library has reread it; it cannot evict an older cached label by itself.
 
-The published 0.4.0 APK is not changed retroactively. Delivery of this fix requires
-a later authorized release with the normal version/code bump and same signer.
+The published 0.4.0 APK is not changed retroactively. Install the signed 0.4.1
+update in place with the same signer.
 After that in-place update, first reopen the library. If its old label persists,
 a normal headset restart when no session is in use is a non-destructive check,
 not a guaranteed cure or a requirement for the app update. Do not force-stop
@@ -84,13 +84,13 @@ Build and sign the release APK, build the clean-baseline AppImage, and complete 
 
 ```sh
 JAVA_HOME=/path/to/jdk17 ANDROID_HOME=/path/to/android-sdk \
-  bash scripts/sign-update-manifest.sh 0.4.0 5 5 5 \
-  dist/metuxa-0.4.0-arm64-v8a.apk \
-  dist/metuxa-0.4.0-x86_64.AppImage \
+  bash scripts/sign-update-manifest.sh 0.4.1 6 5 5 \
+  dist/metuxa-0.4.1-arm64-v8a.apk \
+  dist/metuxa-0.4.1-x86_64.AppImage \
   dist/update-manifest.txt
 ```
 
-The helper verifies the APK signer, package, version and non-debuggable status before signing. It uses the existing `metuxa-release` identity and refuses to overwrite its output. It creates no credentials. Publish the manifest and both binary assets under tag `v0.4.0`, alongside the required exact source and dependency-source archives. Upload everything before promoting the release to latest. Keep source/code/protocol numbers consistent across clients and manifest. Never sign substitute bytes merely to test a public download path.
+The helper verifies the APK signer, package, version and non-debuggable status before signing. It uses the existing `metuxa-release` identity and refuses to overwrite its output. It creates no credentials. Publish the manifest and both binary assets under tag `v0.4.1`, alongside the required exact source and dependency-source archives. Upload everything before promoting the release to latest. Keep source/code/protocol numbers consistent across clients and manifest. Never sign substitute bytes merely to test a public download path.
 
 Run `bash client/quest/tests/run-update-tests.sh` for standalone verifier tests. They use ephemeral in-memory test keys and cover tampering, wrong identity, rollback, incompatible protocol, invalid field layout, oversized payloads/assets and repeated verification. They do not install an APK or prove on-device installer behavior.
 
@@ -98,8 +98,8 @@ Verify final manifest and artifact bytes offline before uploading:
 
 ```sh
 JAVA_HOME=/path/to/jdk17 bash scripts/verify-update-manifest.sh \
-  dist/update-manifest.txt dist/metuxa-0.4.0-arm64-v8a.apk \
-  dist/metuxa-0.4.0-x86_64.AppImage 0.3.0 4
+  dist/update-manifest.txt dist/metuxa-0.4.1-arm64-v8a.apk \
+  dist/metuxa-0.4.1-x86_64.AppImage 0.4.0 5
 ```
 
-The command above checks the upgrade from 0.3.0/code 4 using the application's production public key. Without the optional final version/code arguments, the verifier defaults to 0.2.0/code 3. Neither path changes the trust pin. It also checks the authenticated exact-current announcement path. It never opens private signing files or runs the artifacts.
+The command above checks the upgrade from 0.4.0/code 5 using the application's production public key. Without the optional final version/code arguments, the verifier defaults to 0.2.0/code 3. Neither path changes the trust pin. It also checks the authenticated exact-current announcement path. It never opens private signing files or runs the artifacts.

@@ -8,7 +8,7 @@ The separate package `dev.metuxa.quest` can coexist with the original
 
 ## App name and version
 
-Source builds after 0.4.0 use the stable Android application/launcher label
+Version 0.4.1 uses the stable Android application/launcher label
 **metuxa**. The installed version stays in the launcher footer and **Settings**;
 the running Activities also request a versioned window title. Horizon controls
 its outer window decoration and library cache, so those shell surfaces are not

@@ -83,9 +83,9 @@ Open **Settings** on the PC or Quest. Quest has separate top/bottom panel modes:
 
 Before opening the first stream panel, Quest reads its dimensions over the authenticated connection without starting media, then supplies window-size hints. Saved dimensions or landscape defaults are used if this short check is unavailable. Horizon controls the final outer window size and may preserve a size chosen previously or ignore the hints. The PC’s **System** theme follows the desktop appearance preference, including changes while the app is open.
 
-Updates are hosted by GitHub and signed with the release key. Choose manual checks, notifications or automatic downloads; installation remains explicit. The APK keeps `dev.metuxa.quest` and its signing identity. New source builds use the stable library name **metuxa**, with the version shown inside the app. Published 0.4.0 and earlier APKs still have versioned names. Horizon may retain an older library label or show the package ID; the app cannot guarantee an immediate library refresh. See [Quest app identity](docs/UPDATES.md#quest-library-name-and-installed-version).
+Updates are hosted by GitHub and signed with the release key. Choose manual checks, notifications or automatic downloads; installation remains explicit. The APK keeps `dev.metuxa.quest` and its signing identity. Version 0.4.1 uses the stable library name **metuxa**, with the version shown inside the app. Published 0.4.0 and earlier APKs still have versioned names. Horizon may retain an older library label or show the package ID; the app cannot guarantee an immediate library refresh. See [Quest app identity](docs/UPDATES.md#quest-library-name-and-installed-version).
 
-Version 0.3.0 can download the signed 0.4.0 update; installation remains explicit. From 0.2.0, install 0.4.0 manually because that older release has no updater. Do not uninstall a release-signed APK to upgrade it. Read [Updates](docs/UPDATES.md) for signature checks, rollback, permissions and the first-install transition.
+Versions 0.3.0 and 0.4.0 can download the signed 0.4.1 update; installation remains explicit. From 0.2.0, install 0.4.1 manually because that older release has no updater. Do not uninstall a release-signed APK to upgrade it. Read [Updates](docs/UPDATES.md) for signature checks, rollback, permissions and the first-install transition.
 
 ## Input without surprises
 
@@ -119,7 +119,7 @@ gradle --no-daemon :app:assembleDebug :app:lintDebug :app:testCore
 
 ## Scope and verification
 
-Automated tests cover protocol parsing, input lifecycle, authenticated transport, cross-language interoperability, process supervision and synthetic streaming. They do not establish real-headset latency, comfort, hardware codec reliability or portal compatibility. Read the [verification record](docs/VERIFICATION-0.4.0.md) and [live acceptance checklist](docs/MANUAL-TESTS.md) for what was and was not tested.
+Automated tests cover protocol parsing, input lifecycle, authenticated transport, cross-language interoperability, process supervision and synthetic streaming. They do not establish real-headset latency, comfort, hardware codec reliability or portal compatibility. Read the [verification record](docs/VERIFICATION-0.4.1.md) and [live acceptance checklist](docs/MANUAL-TESTS.md) for what was and was not tested.
 
 The media transport uses standard TLS and AES-GCM primitives in an application-specific protocol. It has **not received an independent security audit**. Use a trusted local network and read the [security model](docs/SECURITY.md). Vulnerability reporting guidance is in [SECURITY.md](SECURITY.md).
 
