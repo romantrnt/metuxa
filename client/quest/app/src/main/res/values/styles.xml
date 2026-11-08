@@ -1,13 +1,75 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="MetuxaTheme" parent="android:style/Theme.Material.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#B6DFF2</item>
-        <item name="android:windowBackground">#12263C</item>
-        <item name="android:navigationBarColor">#12263C</item>
-        <item name="android:statusBarColor">#12263C</item>
-        <item name="android:colorControlNormal">#B8CCDF</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">@color/quest_accent</item>
+        <item name="android:colorControlNormal">@color/quest_muted</item>
+        <item name="android:colorControlActivated">@color/quest_accent</item>
+        <item name="android:colorControlHighlight">@color/quest_ripple</item>
+        <item name="android:colorButtonNormal">@color/quest_field</item>
+        <item name="android:colorEdgeEffect">@color/quest_muted</item>
+        <item name="android:colorBackground">@color/quest_background</item>
+        <item name="android:colorBackgroundFloating">@color/quest_panel</item>
+        <item name="android:textColorPrimary">@color/quest_text</item>
+        <item name="android:textColorPrimaryInverse">@color/quest_ink</item>
+        <item name="android:colorError">@color/quest_error</item>
+        <item name="android:textColorSecondary">@color/quest_muted</item>
+        <item name="android:textColorHint">@color/quest_muted</item>
+        <item name="android:textColorLink">@color/quest_accent</item>
+        <item name="android:textColorHighlight">@color/quest_selection</item>
+        <item name="android:checkboxStyle">@style/MetuxaCheckBox</item>
+        <item name="android:radioButtonStyle">@style/MetuxaRadioButton</item>
+        <item name="android:buttonBarButtonStyle">@style/MetuxaDialogButton</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowBackground">@color/quest_background</item>
+        <item name="android:navigationBarColor">@color/quest_background</item>
+        <item name="android:statusBarColor">@color/quest_background</item>
+        <item name="android:navigationBarDividerColor">@color/quest_border</item>
+        <item name="android:alertDialogTheme">@style/MetuxaDialogTheme</item>
         <item name="android:windowActionModeOverlay">true</item>
+    </style>
+    <!-- AlertDialog creates a separate themed context; pin its full palette too. -->
+    <style name="MetuxaDialogTheme" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">@color/quest_accent</item>
+        <item name="android:colorControlNormal">@color/quest_muted</item>
+        <item name="android:colorControlActivated">@color/quest_accent</item>
+        <item name="android:colorControlHighlight">@color/quest_ripple</item>
+        <item name="android:colorButtonNormal">@color/quest_field</item>
+        <item name="android:colorEdgeEffect">@color/quest_muted</item>
+        <item name="android:colorBackground">@color/quest_background</item>
+        <item name="android:colorBackgroundFloating">@color/quest_panel</item>
+        <item name="android:textColorPrimary">@color/quest_text</item>
+        <item name="android:textColorPrimaryInverse">@color/quest_ink</item>
+        <item name="android:colorError">@color/quest_error</item>
+        <item name="android:textColorSecondary">@color/quest_muted</item>
+        <item name="android:textColorHint">@color/quest_muted</item>
+        <item name="android:textColorLink">@color/quest_accent</item>
+        <item name="android:textColorHighlight">@color/quest_selection</item>
+        <item name="android:checkboxStyle">@style/MetuxaCheckBox</item>
+        <item name="android:radioButtonStyle">@style/MetuxaRadioButton</item>
+        <item name="android:buttonBarButtonStyle">@style/MetuxaDialogButton</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowBackground">@drawable/quest_popup_background</item>
+        <item name="android:backgroundDimAmount">0.6</item>
+    </style>
+    <style name="MetuxaCheckBox" parent="android:style/Widget.Material.CompoundButton.CheckBox">
+        <item name="android:buttonTint">@color/quest_control_tint</item>
+        <item name="android:textColor">@color/quest_text_states</item>
+        <item name="android:minHeight">48dp</item>
+    </style>
+    <style name="MetuxaRadioButton" parent="android:style/Widget.Material.CompoundButton.RadioButton">
+        <item name="android:buttonTint">@color/quest_control_tint</item>
+        <item name="android:textColor">@color/quest_text_states</item>
+        <item name="android:minHeight">48dp</item>
+    </style>
+    <style name="MetuxaDialogButton" parent="android:style/Widget.Material.Button.Borderless">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">@color/quest_accent</item>
+        <item name="android:minHeight">48dp</item>
     </style>
 </resources>

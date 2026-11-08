@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:pathData="M29,72 L29,42 Q29,36 35,36 L55,36 Q61,36 61,42 L61,72" android:strokeColor="#B6DFF2" android:strokeWidth="7" android:strokeLineCap="round" android:fillColor="#00000000" />
-    <path android:pathData="M61,72 L61,49 Q61,43 67,43 L73,43 Q79,43 79,49 L79,72" android:strokeColor="#F2F7FC" android:strokeWidth="7" android:strokeLineCap="round" android:fillColor="#00000000" />
-</vector>
+<!-- Preserve the complete mascot inside Android's 66dp adaptive-icon safe zone. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="20%">
+    <bitmap android:src="@drawable/metuxa_tux" android:gravity="fill" android:filter="true" />
+</inset>

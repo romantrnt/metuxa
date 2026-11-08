@@ -1,0 +1,35 @@
+// Opt-in only: no production build file or runtime dependency is modified.
+allprojects { project ->
+    project.plugins.withId('com.android.application') {
+        project.android.testOptions.unitTests.includeAndroidResources = true
+        project.android.sourceSets.test.java.srcDir(project.rootProject.file('tests/ui'))
+        project.dependencies.add('testImplementation', 'junit:junit:4.13.2')
+        project.dependencies.add('testImplementation', 'org.robolectric:robolectric:4.14.1')
+        project.tasks.withType(Test).configureEach {
+            maxHeapSize = '3g'
+            systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+            systemProperty 'java.awt.headless', 'true'
+            systemProperty 'metuxa.ui.qa.output', project.file('build/ui-qa/screenshots').absolutePath
+            // Gradle --offline alone does not disable Robolectric's own resolver.
+            if (gradle.startParameter.offline) {
+                def sdkDir = project.file('build/ui-qa/android-sdk-jars')
+                systemProperty 'robolectric.offline', 'true'
+                systemProperty 'robolectric.dependency.dir', sdkDir.absolutePath
+                doFirst {
+                    sdkDir.mkdirs()
+                    ['14-robolectric-10818077-i7', '15-robolectric-12650502-i7'].each { version ->
+                        def name = "android-all-instrumented-${version}.jar"
+                        def cached = new File(System.getProperty('user.home'), ".m2/repository/org/robolectric/android-all-instrumented/${version}/${name}")
+                        if (!cached.isFile()) throw new GradleException("Missing cached Android test runtime ${version}. Run tests/ui/run.sh --online once.")
+                        def target = new File(sdkDir, name)
+                        if (!target.exists()) {
+                            try { java.nio.file.Files.createLink(target.toPath(), cached.toPath()) }
+                            catch (IOException ignored) { java.nio.file.Files.copy(cached.toPath(), target.toPath()) }
+                        }
+                    }
+                }
+            }
+            testLogging { events 'passed', 'failed', 'skipped'; exceptionFormat 'full'; showStandardStreams = true }
+        }
+    }
+}

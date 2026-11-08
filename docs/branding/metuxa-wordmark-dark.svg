@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="240" viewBox="0 0 360 240" role="img" aria-labelledby="title">
+  <title id="title">metuxa</title>
+  <!-- Same 24px / 800 / -1px treatment as the GTK header, scaled 4×. -->
+  <g transform="translate(10 142) scale(4)">
+    <text x="0" y="0" fill="#f0f3f6" font-family="Noto Sans, Cantarell, system-ui, sans-serif" font-size="24" font-weight="800" letter-spacing="-1">metuxa</text>
+  </g>
+</svg>

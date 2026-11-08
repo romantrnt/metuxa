@@ -1,23 +1,36 @@
-# metuxa 0.2.0 local verification
+# metuxa 0.2.0 verification
 
-## Passed
+Release preparation: **2026-11-08**. The maintainer accepted the prior local APK/server build before authorizing publication. This record separates automated checks from device acceptance; the final AppImage and release-signed APK were not installed onto the user's live setup by the release process.
 
-- Native Linux build: server with Wayland portal/PipeWire support and GTK4 controller. The build used GCC16, FFmpeg libavcodec63, OpenSSL3.6.5, PipeWire1.6.9, sdbus-c++1.5, GTK/gtkmm4, json-glib1.10.8. A local, guarded header compatibility shim handles this laptop's development GTK/GLib snapshots without changing installed headers.
-- Meson tests: packet/protocol, strict input and release lifecycle, software encoder source resizing and Opus, secure transport, GTK settings/process supervision.
-- ASan/UBSan: input/protocol, security transport and lifecycle/discovery tests. The latter mock source health/portal grants/discovery networking and make no real capture or input requests.
-- Cross-language security: Java SSLSocket and OpenSSL interoperability, wrong fingerprint/token rejection, exact AES-GCM wire vector, encrypted RTP, invalid/replayed/wrong-source RTCP rejection, release on disconnect, live input-state updates and a sustained session beyond the heartbeat timeout.
-- Full application synthetic integration in a private network namespace with no user D-Bus/display/PipeWire: three encrypted software video streams reconstructed and decoded by FFmpeg, primary-only synthetic audio, 20 reconnects, orderly stop, fresh identity on next Start, audio-off behavior.
-- GTK interaction tests in a private headless Weston compositor and private D-Bus without activation services: normal and compact/dark layouts, settings, Start/Stop/failure states using a synthetic child, close/cancel, code hiding, live input controls, diagnostic filtering, no orphan child even after abrupt controller death. Screenshots show synthetic sessions, not a captured desktop.
-- Input send ordering: generation/session tokens invalidate queued and dequeued-but-unclaimed events on policy changes, server revocation, overflow and reconnect. The pure-Java concurrency regression suite passed 25 repetitions (925 assertions). An already-claimed network write cannot be recalled; release-all follows it before new-generation input.
-- Android APK assembly and lint: 0 errors, 10 retained warnings. Pure-Java input/lifecycle/endpoint/paste/diagnostic tests passed 289 assertions, including all 16 combinations of the four action gates, mixed-source drag isolation, device unplug, neutral rearming, native-control key releases and movement/scroll with clicks disabled; static architectural checks also passed. APK signature v2 and zip alignment verified. Debug package identity is `dev.metuxa.quest`, separate from the old application.
-- Original rollback folder checksum verification: all listed artifacts and start scripts match their existing SHA256SUMS. The old installed apps were not replaced or launched by this work.
+## Passed on the final application sources
 
-## Not performed / remaining acceptance
+- **Native Linux:** host build and all five Meson suites (protocol, input state, encoder resize/audio, security and control/process supervision). The release packaging build also passed these five suites on its Ubuntu 24.04 baseline.
+- **Second code review:** transport, authentication, input/lifecycle and packaging review. An untrusted-discovery allocation bound was fixed and re-reviewed. See [REVIEW-0.2.0.md](REVIEW-0.2.0.md) for findings and unresolved device-reliability risks. This is not an external professional security audit.
+- **Security/interoperability:** C++ negative control/media tests, Java/OpenSSL pinned TLS, wrong fingerprint/token rejection, AES-GCM wire equivalence, invalid/replayed/wrong-source feedback rejection, input revocation and a sustained heartbeat session. Normal and ASan/UBSan runs passed. SessionInputQueue concurrency tests passed 37 assertions per run.
+- **Sanitizers:** protocol/input and lifecycle/mocked-discovery tests passed with ASan/UBSan and leak detection. These tests do not request live capture or inject desktop input.
+- **GTK interactions:** private headless compositor and private D-Bus, synthetic server only. Startup, sources, presets, permission/capability states, pairing privacy, live input controls, close cancellation and orderly shutdown passed. Normal and compact/dark layouts were visually inspected.
+- **Android release:** JDK 17, Gradle 8.7, Android platform/build-tools 34. Final `assembleRelease`, `lintRelease` and `testCore` passed. Lint retains 0 errors and 10 warnings; they include Quest-only ABI, the fingerprint-pinned trust manager and untranslated UI strings.
+- **Java regressions:** 614 assertions for endpoints, discovery budgets, all action-gate combinations, pointer ownership, source isolation, keyboard/IME queues and lifecycle/diagnostic bounds. Static architecture checks passed.
+- **Graphite theme:** 122 offline checks; minimum enabled text contrast 5.43:1 for the checked palette combinations. Controls, dialogs, selection, focus and disabled states use the neutral palette.
+- **Actual Android View rendering:** four opt-in Robolectric/native-graphics tests passed. Views were inspected at 1200 px, 480 px and 360 px with 150% font scaling, plus wide/narrow resizing, presets, dialog Cancel/Reset/Close and toolbar controls at 800/360 px. Visual inspection found and fixed missing adaptive button gaps. These are real View renders, not screenshots from Horizon OS. See [UI test instructions](../client/quest/tests/ui/README.md).
+- **APK identity:** non-debuggable `dev.metuxa.quest`, version 0.2.0 / code 3, API 32 minimum / target 34. Permanent RSA-4096 release certificate, APK signature v3 and zip alignment verified. The public certificate fingerprint and debug-to-release transition are in [RELEASING.md](RELEASING.md). Private key material stays outside the repository and all release assets.
+- **Repository presentation:** EN/RU/zh-CN structure, local links, light/dark responsive wordmarks, mobile hero, safe desktop and Android screenshots, source diff checks. The mascot PNG is copied unchanged into both launcher/package resources.
 
-- No metuxa install or launch on Quest, no real portal screen/audio capture, no real remote input, no live hardware encoder/decoder or Noda test. Android instrumentation and real device UI screenshots were not run. In particular, focus/IME behavior must be tested in Horizon OS.
-- No numeric latency/quality/comfort guarantee. Encryption CPU cost and three-panel behavior need measurement on the actual headset.
-- No independent security audit. Standard crypto primitives and negative tests do not establish an audited custom transport.
-- Native test folder is specific to the laptop's installed system libraries. Nix/Flatpak recipes were adapted but not rebuilt; a portable AppImage and signed release APK remain separate release work after live acceptance.
-- C++ clang-format/clang-tidy were not run because those tools are absent from the current environment. Native GCC warnings, security `-Werror`, Android lint, sanitizer and functional tests were used; this is not represented as a complete static-analysis pass.
-- Android lint retains warnings for Quest-only ABI, the custom fingerprint-pinned trust manager and untranslated programmatic UI strings. UI text is currently English; the test-start instructions are provided in Russian.
-- No GitHub repository content, release, deployment or other public artifact was published.
+## Previous broader synthetic acceptance
+
+The prior local source build passed full synthetic integration in a private network namespace without the user's bus/display/PipeWire: three encrypted software video streams reconstructed and decoded by FFmpeg, primary-only synthetic audio, 20 reconnects, orderly stop, fresh identity on the next Start and audio-off behavior. Input queue regressions also passed 25 repetitions (925 assertions). No transport or encoder behavior was changed during presentation/signing work.
+
+The old MetaShare build and the accepted pre-release source remain available for rollback. The release process did not stop, replace or launch the user's live stream and did not install an APK.
+
+## Artifact and publication checks
+
+The Linux package baseline, bundled-library/source closure, runtime provenance and exact package smoke checks are documented in [APPIMAGE.md](APPIMAGE.md). SHA-256 checksums accompany the released APK, AppImage and source archives. Check the release tag and its exact-commit CI results; a workflow configuration by itself is not a passing CI run.
+
+## Limits and remaining live tests
+
+- No final release APK installation/upgrade on Quest, real portal screen/audio capture, actual remote-input injection, real GPU encode/decode or Noda coexistence test was performed by this release process. A non-debug APK has a different signing identity from the local debug build.
+- Android View tests do not establish Horizon focus/IME behavior, physical hand/controller/mouse identification, MediaCodec lifecycle or audio behavior. Follow [MANUAL-TESTS.md](MANUAL-TESTS.md), especially disconnect/surface recreation and permission revocation.
+- No measured latency, image-quality or comfort guarantee. Hardware codecs being registered does not prove that a particular GPU can initialize them.
+- The AppImage is for x86_64 on modern Linux with the documented glibc baseline and working Wayland/portal/PipeWire services. It is not a universal distribution or old-LTS compatibility claim. The alternate Nix/Flatpak recipes were not rebuilt in this release pass.
+- The media packet counter is bounded below `2^32`; there is no automatic rekey at that limit. Reconnect to create a fresh session. The code review found a possible callback/teardown overlap in the hardware decoder but did not reproduce a crash; see the review record.
+- clang-format/clang-tidy were unavailable on the local host. Compiler warnings, security `-Werror`, Android lint, sanitizers, static checks and functional tests were used instead; this is not a full static-analysis pass.

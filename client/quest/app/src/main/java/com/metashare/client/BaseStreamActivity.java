@@ -45,11 +45,11 @@ abstract class BaseStreamActivity extends Activity implements SurfaceHolder.Call
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         root = new FrameLayout(this); root.setBackgroundColor(QuestUi.BACKGROUND); root.setFocusableInTouchMode(true);
         viewport = new FrameLayout(this); viewport.setBackgroundColor(android.graphics.Color.BLACK);
-        FrameLayout.LayoutParams viewportParams = new FrameLayout.LayoutParams(-1, -1); viewportParams.topMargin = QuestUi.dp(this, 64); viewportParams.bottomMargin = QuestUi.dp(this, 68);
+        FrameLayout.LayoutParams viewportParams = new FrameLayout.LayoutParams(-1, -1); viewportParams.topMargin = QuestUi.dp(this, 64); viewportParams.bottomMargin = QuestToolbar.height(this);
         root.addView(viewport, viewportParams);
         surface = new RemoteSurfaceView(this); surface.getHolder().addCallback(this); surface.setFocusableInTouchMode(true); surface.setContentDescription("Remote monitor " + (monitorIndex + 1) + " on " + connection.endpoint.key());
         viewport.addView(surface, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
-        status = QuestUi.text(this, "", 13, QuestUi.MUTED); status.setMaxLines(3); status.setPadding(QuestUi.dp(this, 16), QuestUi.dp(this, 6), QuestUi.dp(this, 16), 0);
+        status = QuestUi.text(this, "", 13, QuestUi.MUTED); status.setMaxLines(3); status.setBackgroundColor(QuestUi.PANEL); status.setGravity(Gravity.CENTER_VERTICAL); status.setPadding(QuestUi.dp(this, 16), QuestUi.dp(this, 6), QuestUi.dp(this, 16), 0);
         root.addView(status, new FrameLayout.LayoutParams(-1, QuestUi.dp(this, 64), Gravity.TOP));
         forwarder.setStatusListener(this::showStatus);
         input = new RemoteInputController(this, root, surface, forwarder);

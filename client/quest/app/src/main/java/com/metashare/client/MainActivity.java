@@ -32,6 +32,7 @@ public final class MainActivity extends Activity {
     private EditText host, port, fingerprint, token;
     private CheckBox audio, autoConnect, moveInput, clickInput, scrollInput, keyboardInput;
     private TextView presetStatus;
+    private final Button[] presetButtons = new Button[3];
     private Spinner monitorCount;
     private RadioGroup pointerModes;
     private final int[] pointerModeIds = new int[4];
@@ -55,10 +56,10 @@ public final class MainActivity extends Activity {
     private void buildUi() {
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(QuestUi.BACKGROUND);
         LinearLayout page = QuestUi.column(this); int margin = QuestUi.dp(this, 24); page.setPadding(margin, margin, margin, margin);
-        TextView brand = QuestUi.text(this, "metuxa", 38, QuestUi.TEXT); brand.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); page.addView(brand);
+        TextView brand = QuestUi.text(this, "metuxa", 38, QuestUi.TEXT); brand.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); brand.setLetterSpacing(-0.035f); brand.setAccessibilityHeading(true); page.addView(brand);
         page.addView(QuestUi.text(this, "Your PC, in your space.", 17, QuestUi.MUTED)); QuestUi.space(page, 16);
         sessionStatus = QuestUi.text(this, "", 14, QuestUi.ACCENT); sessionStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); page.addView(sessionStatus);
-        LinearLayout live = QuestUi.row(this); resumeButton = QuestUi.button(this, "Return to screens", true); disconnectButton = QuestUi.button(this, "Disconnect all", false);
+        LinearLayout live = QuestUi.actions(this); resumeButton = QuestUi.button(this, "Return to screens", true); disconnectButton = QuestUi.button(this, "Disconnect all", false);
         live.addView(resumeButton); live.addView(disconnectButton); page.addView(live);
         resumeButton.setOnClickListener(v -> openScreens()); disconnectButton.setOnClickListener(v -> { coordinator.disconnect(); refreshSession(); });
         QuestUi.space(page, 14);
@@ -68,7 +69,7 @@ public final class MainActivity extends Activity {
         LinearLayout connection = QuestUi.column(this), controls = QuestUi.column(this);
         connectionCard = connection; controlsCard = controls;
         int pad = QuestUi.dp(this, 20); connection.setPadding(pad, pad, pad, pad); controls.setPadding(pad, pad, pad, pad);
-        connection.setBackground(QuestUi.background(this, QuestUi.PANEL, 18)); controls.setBackground(QuestUi.background(this, QuestUi.PANEL, 18));
+        connection.setBackground(QuestUi.outlined(this, QuestUi.PANEL, 18, QuestUi.BORDER, 1)); controls.setBackground(QuestUi.outlined(this, QuestUi.PANEL, 18, QuestUi.BORDER, 1));
         LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(wide ? 0 : -1, -2, wide ? 1.15f : 0);
         LinearLayout.LayoutParams right = new LinearLayout.LayoutParams(wide ? 0 : -1, -2, wide ? 1f : 0);
         if (wide) right.leftMargin = QuestUi.dp(this, 16); else right.topMargin = QuestUi.dp(this, 16);
@@ -76,31 +77,31 @@ public final class MainActivity extends Activity {
         QuestUi.heading(connection, "Connect to your PC");
         connection.addView(QuestUi.text(this, "Start metuxa on the PC. Choose it here, then copy its fingerprint and pairing token.", 14, QuestUi.MUTED));
         QuestUi.space(connection, 10);
-        LinearLayout hostActions = QuestUi.row(this);
+        LinearLayout hostActions = QuestUi.actions(this);
         scanButton = QuestUi.button(this, "Find nearby PCs", false); hostActions.addView(scanButton); scanButton.setOnClickListener(v -> scan());
-        Button saved = QuestUi.button(this, "Saved PCs", false); hostActions.addView(saved); saved.setOnClickListener(v -> showSaved()); connection.addView(hostActions);
-        discoveryStatus = QuestUi.text(this, "Discovery only suggests addresses. It does not verify a PC's identity.", 12, QuestUi.MUTED); connection.addView(discoveryStatus);
+        Button saved = QuestUi.button(this, "Saved PCs", false); hostActions.addView(saved); saved.setOnClickListener(v -> showSaved()); connection.addView(hostActions); QuestUi.space(connection, 10);
+        discoveryStatus = QuestUi.text(this, "Discovery only suggests addresses. It does not verify a PC's identity.", 13, QuestUi.MUTED); connection.addView(discoveryStatus);
         hosts = QuestUi.column(this); connection.addView(hosts);
         host = field(connection, "PC address", "192.168.1.20 or hostname", false); host.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         port = field(connection, "Base port", "7878", false); port.setInputType(InputType.TYPE_CLASS_NUMBER); port.setText("7878");
         fingerprint = field(connection, "Server SHA-256 fingerprint", "64 hex characters, from your PC", false);
         fingerprint.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
         token = field(connection, "Pairing token", "32 hex characters, from your PC", true);
-        connection.addView(QuestUi.text(this, "Compare the fingerprint with the PC display. Tokens are stored encrypted on this headset. New server runs may require new pairing details.", 12, QuestUi.MUTED));
+        connection.addView(QuestUi.text(this, "Compare the fingerprint with the PC display. Tokens are stored encrypted on this headset. New server runs may require new pairing details.", 13, QuestUi.MUTED));
         QuestUi.space(connection, 10);
         autoConnect = check(connection, "Connect to this saved PC when metuxa opens", false);
-        connection.addView(QuestUi.text(this, "Off by default. Reconnection during a session always stays on the same PC.", 12, QuestUi.MUTED));
-        LinearLayout actions = QuestUi.row(this); Button connect = QuestUi.button(this, "Connect", true), save = QuestUi.button(this, "Save PC", false), forget = QuestUi.button(this, "Forget", false);
-        actions.addView(connect); actions.addView(save); actions.addView(forget); connection.addView(actions);
+        connection.addView(QuestUi.text(this, "Off by default. Reconnection during a session always stays on the same PC.", 13, QuestUi.MUTED));
+        QuestUi.space(connection, 16); LinearLayout actions = QuestUi.actions(this); Button connect = QuestUi.button(this, "Connect", true), save = QuestUi.button(this, "Save PC", false), forget = QuestUi.button(this, "Forget", false);
+        actions.addView(connect); actions.addView(save); actions.addView(forget); connection.addView(actions); QuestUi.space(connection, 12);
         connect.setOnClickListener(v -> connect()); save.setOnClickListener(v -> { if (saveSettings()) showStatus("PC and settings saved.", false); }); forget.setOnClickListener(v -> forget());
         status = QuestUi.text(this, "Nothing connects until you choose Connect.", 13, QuestUi.MUTED); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); connection.addView(status);
         QuestUi.heading(controls, "Remote input");
         controls.addView(QuestUi.text(this, "Saved globally and applied immediately to every current and new window. Local launcher and toolbar controls always remain usable.", 14, QuestUi.MUTED));
-        presetStatus = QuestUi.text(this, "", 15, QuestUi.ACCENT); controls.addView(presetStatus);
-        LinearLayout presets = QuestUi.row(this);
+        QuestUi.space(controls, 12); presetStatus = QuestUi.text(this, "", 14, QuestUi.MUTED); controls.addView(presetStatus); QuestUi.space(controls, 10);
+        LinearLayout presets = QuestUi.actions(this);
         String[] presetNames = { "Full remote", "Keyboard only", "View only" };
         for (int i = 0; i < presetNames.length; i++) {
-            final int preset = i; Button b = QuestUi.button(this, presetNames[i], false);
+            final int preset = i; Button b = QuestUi.button(this, presetNames[i], false); presetButtons[i] = b;
             presets.addView(b, new LinearLayout.LayoutParams(0, -2, 1));
             b.setOnClickListener(v -> { coordinator.changeInputOptions(this, InputOptions.preset(preset)); refreshInputControls(); showStatus("Input preset applied to every window.", false); });
         }
@@ -114,50 +115,56 @@ public final class MainActivity extends Activity {
         clickInput.setOnCheckedChangeListener((b, checked) -> saveInputControls());
         scrollInput.setOnCheckedChangeListener((b, checked) -> saveInputControls());
         keyboardInput.setOnCheckedChangeListener((b, checked) -> saveInputControls());
-        controls.addView(QuestUi.text(this, "With movement off, clicks use the PC's existing cursor: no hidden position update is sent. Dragging requires movement. Changing input settings releases held input and cancels pending pasted text.", 12, QuestUi.MUTED));
-        QuestUi.space(controls, 16); QuestUi.heading(controls, "Pointer device rules");
+        controls.addView(QuestUi.text(this, "With movement off, clicks use the PC's existing cursor: no hidden position update is sent. Dragging requires movement. Changing input settings releases held input and cancels pending pasted text.", 13, QuestUi.MUTED));
+        QuestUi.divider(controls); QuestUi.heading(controls, "Pointer device rules");
         controls.addView(QuestUi.text(this, "Device rules affect pointer actions only. The keyboard has its own switch above.", 13, QuestUi.MUTED));
         pointerModes = new RadioGroup(this);
         String[] sourceModes = { "All pointer devices (unfiltered)", "Block all pointer devices",
             "Only selected physical pointer devices (experimental)", "All identifiable physical pointer devices except selected" };
         for (int i = 0; i < sourceModes.length; i++) {
-            RadioButton button = new RadioButton(this); pointerModeIds[i] = View.generateViewId(); button.setId(pointerModeIds[i]); button.setTag(i); button.setMinHeight(QuestUi.dp(this, 48)); button.setTextColor(QuestUi.TEXT);
+            RadioButton button = new RadioButton(this); pointerModeIds[i] = View.generateViewId(); button.setId(pointerModeIds[i]); button.setTag(i); QuestUi.styleToggle(button);
             button.setText(sourceModes[i]); pointerModes.addView(button);
         }
         pointerModes.check(pointerModeId(settings.pointerMode())); controls.addView(pointerModes);
         pointerModes.setOnCheckedChangeListener((g, id) -> { if (!applyingProfile) { coordinator.changePointerMode(this, selectedPointerMode()); refreshInputControls(); } });
-        Button devices = QuestUi.button(this, "Choose allowed pointer devices", false); controls.addView(devices); devices.setOnClickListener(v -> chooseDevices(false));
-        Button excluded = QuestUi.button(this, "Choose excluded pointer devices", false); controls.addView(excluded); excluded.setOnClickListener(v -> chooseDevices(true));
+        Button devices = QuestUi.button(this, "Choose allowed pointer devices", false); controls.addView(devices, new LinearLayout.LayoutParams(-1, -2)); QuestUi.space(controls, 8); devices.setOnClickListener(v -> chooseDevices(false));
+        Button excluded = QuestUi.button(this, "Choose excluded pointer devices", false); controls.addView(excluded, new LinearLayout.LayoutParams(-1, -2)); excluded.setOnClickListener(v -> chooseDevices(true));
         QuestUi.space(controls, 8);
-        controls.addView(QuestUi.text(this, "Both filtered modes block unknown, virtual or unidentified Android devices. An empty allowlist blocks every pointer; an empty exclusion list allows all identifiable non-virtual pointers. Unfiltered mode also permits unknown and virtual sources.", 12, QuestUi.MUTED));
+        controls.addView(QuestUi.text(this, "Both filtered modes block unknown, virtual or unidentified Android devices. An empty allowlist blocks every pointer; an empty exclusion list allows all identifiable non-virtual pointers. Unfiltered mode also permits unknown and virtual sources.", 13, QuestUi.MUTED));
         controls.addView(QuestUi.text(this, "Quest Home may report hands and controllers as the same Android device. Names and descriptors are not proof of physical origin. These rules cannot promise hand-only filtering. Block all pointer devices to prevent every pointer source from controlling the PC; Home hand tracking itself stays on.", 13, QuestUi.MUTED));
         refreshInputControls();
-        QuestUi.space(controls, 22); QuestUi.heading(controls, "Screens & sound");
+        QuestUi.divider(controls); QuestUi.heading(controls, "Screens & sound");
         audio = check(controls, "Play PC audio in the main window", settings.audio());
-        controls.addView(QuestUi.text(this, "Only the main window plays audio. Server audio must also be enabled.", 12, QuestUi.MUTED));
-        QuestUi.space(controls, 8); controls.addView(QuestUi.text(this, "Windows to open", 14, QuestUi.TEXT));
-        monitorCount = new Spinner(this); monitorCount.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[] { "1 monitor", "2 monitors", "3 monitors" }));
-        monitorCount.setSelection(settings.monitors() - 1); controls.addView(monitorCount, new LinearLayout.LayoutParams(-1, QuestUi.dp(this, 48)));
-        controls.addView(QuestUi.text(this, "Sound and starting window count apply on the next connection. The toolbar can add or close available monitors.", 12, QuestUi.MUTED));
-        Button saveOptions = QuestUi.button(this, "Save screen settings", false); controls.addView(saveOptions);
+        controls.addView(QuestUi.text(this, "Only the main window plays audio. Server audio must also be enabled.", 13, QuestUi.MUTED));
+        QuestUi.space(controls, 12); TextView windowsLabel = QuestUi.text(this, "Windows to open", 14, QuestUi.TEXT); controls.addView(windowsLabel); QuestUi.space(controls, 6);
+        monitorCount = new Spinner(this, Spinner.MODE_DROPDOWN); monitorCount.setId(View.generateViewId()); windowsLabel.setLabelFor(monitorCount.getId());
+        ArrayAdapter<String> monitorAdapter = new ArrayAdapter<>(this, R.layout.quest_spinner_value, new String[] { "1 monitor", "2 monitors", "3 monitors" });
+        monitorAdapter.setDropDownViewResource(R.layout.quest_spinner_option); monitorCount.setAdapter(monitorAdapter);
+        monitorCount.setBackgroundTintList(null); monitorCount.setBackgroundResource(R.drawable.quest_spinner_background);
+        monitorCount.setPopupBackgroundResource(R.drawable.quest_popup_background); monitorCount.setMinimumHeight(QuestUi.dp(this, 52));
+        monitorCount.setSelection(settings.monitors() - 1); controls.addView(monitorCount, new LinearLayout.LayoutParams(-1, -2)); QuestUi.space(controls, 8);
+        controls.addView(QuestUi.text(this, "Sound and starting window count apply on the next connection. The toolbar can add or close available monitors.", 13, QuestUi.MUTED));
+        QuestUi.space(controls, 12); Button saveOptions = QuestUi.button(this, "Save screen settings", false); controls.addView(saveOptions, new LinearLayout.LayoutParams(-1, -2));
         saveOptions.setOnClickListener(v -> { settings.options(audio.isChecked(), monitorCount.getSelectedItemPosition() + 1, !settings.autoHost().isEmpty(), settings.autoHost()); showStatus("Screen settings saved for your next connection.", false); });
-        QuestUi.space(controls, 22); QuestUi.heading(controls, "Input diagnostics");
+        QuestUi.divider(controls); QuestUi.heading(controls, "Input diagnostics");
         CheckBox diagnostics = check(controls, "Collect pointer metadata for this app session", coordinator.diagnostics.enabled());
         diagnostics.setOnCheckedChangeListener((b, checked) -> coordinator.diagnostics.setEnabled(checked));
-        controls.addView(QuestUi.text(this, "Off by default. Source, tool type, device ID, action, buttons and device identity metadata only. No coordinates, keyboard events, typed text, screenshots or saved files. Up to 80 samples in memory.", 12, QuestUi.MUTED));
-        Button inspect = QuestUi.button(this, "Inspect / reset metadata", false); controls.addView(inspect); inspect.setOnClickListener(v -> showDiagnostics());
-        QuestUi.space(page, 18); page.addView(QuestUi.text(this, "metuxa • Quest client • 0.2.0\nIndependent install from MetaShare. No capture or remote control starts on the PC from this launcher alone.", 12, QuestUi.MUTED));
+        controls.addView(QuestUi.text(this, "Off by default. Source, tool type, device ID, action, buttons and device identity metadata only. No coordinates, keyboard events, typed text, screenshots or saved files. Up to 80 samples in memory.", 13, QuestUi.MUTED));
+        QuestUi.space(controls, 12); Button inspect = QuestUi.button(this, "Inspect / reset metadata", false); controls.addView(inspect, new LinearLayout.LayoutParams(-1, -2)); inspect.setOnClickListener(v -> showDiagnostics());
+        QuestUi.space(page, 18); page.addView(QuestUi.text(this, "metuxa • Quest client • 0.2.0\nIndependent install from MetaShare. No capture or remote control starts on the PC from this launcher alone.", 13, QuestUi.MUTED));
         scroll.addView(page); setContentView(scroll);
     }
     private EditText field(LinearLayout parent, String label, String hint, boolean secret) {
-        QuestUi.space(parent, 10); TextView title = QuestUi.text(this, label, 14, QuestUi.TEXT); parent.addView(title);
+        QuestUi.space(parent, 16); TextView title = QuestUi.text(this, label, 14, QuestUi.TEXT); parent.addView(title); QuestUi.space(parent, 6);
         EditText edit = new EditText(this); edit.setId(View.generateViewId()); title.setLabelFor(edit.getId()); edit.setSingleLine(true); edit.setTextColor(QuestUi.TEXT); edit.setHintTextColor(QuestUi.MUTED); edit.setTextSize(15); edit.setHint(hint);
         edit.setInputType(InputType.TYPE_CLASS_TEXT | (secret ? InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
-        edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO); edit.setSaveEnabled(!secret); edit.setMinHeight(QuestUi.dp(this, 48));
+        edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO); edit.setSaveEnabled(!secret); edit.setMinHeight(QuestUi.dp(this, 52));
+        edit.setBackgroundTintList(null); edit.setBackgroundResource(R.drawable.quest_field_background);
+        edit.setPadding(QuestUi.dp(this, 14), QuestUi.dp(this, 12), QuestUi.dp(this, 14), QuestUi.dp(this, 12));
         parent.addView(edit, new LinearLayout.LayoutParams(-1, -2)); return edit;
     }
     private CheckBox check(LinearLayout parent, String label, boolean checked) {
-        CheckBox c = new CheckBox(this); c.setText(label); c.setTextColor(QuestUi.TEXT); c.setMinHeight(QuestUi.dp(this, 48)); c.setChecked(checked); parent.addView(c); return c;
+        CheckBox c = new CheckBox(this); c.setText(label); QuestUi.styleToggle(c); c.setChecked(checked); parent.addView(c); return c;
     }
     private void scan() {
         if (discovery != null) discovery.cancel();
@@ -237,6 +244,7 @@ public final class MainActivity extends Activity {
         InputOptions options = settings.inputOptions(); applyingProfile = true;
         moveInput.setChecked(options.move); clickInput.setChecked(options.click); scrollInput.setChecked(options.scroll); keyboardInput.setChecked(options.keyboard);
         pointerModes.check(pointerModeId(options.pointerMode)); presetStatus.setText("Active preset: " + options.presetLabel());
+        for (Button button : presetButtons) if (button != null) button.setSelected(button.getText().toString().equals(options.presetLabel()));
         applyingProfile = false;
     }
     private void chooseDevices(boolean excluded) {
@@ -266,7 +274,7 @@ public final class MainActivity extends Activity {
             }).setNegativeButton("Cancel", null).show();
     }
     private void showDiagnostics() {
-        TextView content = QuestUi.text(this, diagnosticsSnapshot(), 12, QuestUi.TEXT); content.setTypeface(android.graphics.Typeface.MONOSPACE); content.setPadding(24, 16, 24, 16);
+        TextView content = QuestUi.text(this, diagnosticsSnapshot(), 12, QuestUi.TEXT); content.setTypeface(android.graphics.Typeface.MONOSPACE); content.setPadding(QuestUi.dp(this, 24), QuestUi.dp(this, 16), QuestUi.dp(this, 24), QuestUi.dp(this, 16));
         ScrollView scroller = new ScrollView(this); scroller.addView(content);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Pointer metadata only").setView(scroller).setPositiveButton("Close", null).setNeutralButton("Reset", null).create();
         Handler handler = new Handler(Looper.getMainLooper());

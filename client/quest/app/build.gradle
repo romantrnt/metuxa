@@ -10,7 +10,7 @@ android {
         applicationId 'dev.metuxa.quest'
         minSdk 32          // Quest 3 runtime
         targetSdk 34
-        versionCode 2
+        versionCode 3
         versionName '0.2.0'
     }
 

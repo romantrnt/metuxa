@@ -1,0 +1,8 @@
+FROM docker.io/library/ubuntu@sha256:78d4744ead1f5b19b04d0df558ab182a5300903900755e515b2ca4d10eb2044d
+COPY ubuntu-build-packages.lock /tmp/ubuntu-build-packages.lock
+# Fail if an exact package is no longer in the signed repositories; never
+# silently replace the audited toolchain with newer distribution packages.
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources && \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    $(awk '{printf "%s=%s ", $1, $2}' /tmp/ubuntu-build-packages.lock)
+WORKDIR /work

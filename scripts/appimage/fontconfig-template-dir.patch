@@ -1,0 +1,15 @@
+--- a/src/fcinit.c
++++ b/src/fcinit.c
+@@ -95,7 +95,12 @@
+ 
+ 	return fallback;
+     }
+-    (void) FcConfigParseOnly (config, (const FcChar8 *)FC_TEMPLATEDIR, FcFalse);
++    /* metuxa AppImage: template discovery must remain inside its runtime.
++     * Active font rules still follow the standard FONTCONFIG_FILE/PATH. */
++    const char *template_dir = getenv ("FONTCONFIG_TEMPLATE_DIR");
++    if (!template_dir)
++	template_dir = FC_TEMPLATEDIR;
++    (void) FcConfigParseOnly (config, (const FcChar8 *)template_dir, FcFalse);
+ 
+     if (config->cacheDirs && config->cacheDirs->num == 0)

@@ -12,7 +12,7 @@ The code is a per-run secret, not a six-digit PIN and not a one-connection-only 
 
 Each authenticated monitor connection gets fresh, independent server-to-client and client-to-server AES-256-GCM keys and nonce prefixes over TLS. The authenticated UDP envelope covers RTP and RTCP. It includes a direction and monotonically increasing packet counter, with a bounded replay window and a per-key counter limit. Invalid authentication, wrong direction, old/replayed packets and malformed envelopes are discarded before packet parsing. No raw-RTP fallback is available.
 
-This is an application-specific envelope built from standard TLS/AES-GCM primitives, **not an independently audited protocol or an SRTP/DTLS certification**. It needs further review and real-device testing before a public release. Traffic timing, packet sizes and local discovery metadata remain visible. Discovery offers are only hints; authentication does not trust them.
+This is an application-specific envelope built from standard TLS/AES-GCM primitives, **not an independently audited protocol or an SRTP/DTLS certification**. Review and real-device validation remain necessary; consult the verification record and the notes for the exact release you use. Traffic timing, packet sizes and local discovery metadata remain visible. Discovery offers are only hints; authentication does not trust them.
 
 ## Input and permissions
 
@@ -26,7 +26,7 @@ No global hand-tracking permission is changed. Movement/hover, clicks/drag and s
 - A network peer can still attempt denial of service; TLS does not prevent connection flooding or radio interference.
 - Status/private pairing output is sensitive. Do not redirect it into a shared logfile. The GUI diagnostic export excludes pairing details and input contents.
 - This does not protect against a compromised laptop, headset, OS, compositor, process debugger or malicious local user with equivalent account access.
-- Ephemeral identity changes every server start. This favors explicit local testing and revocation over unattended convenience.
+- Ephemeral identity changes every server start. This favors explicit pairing and revocation over unattended convenience.
 - No claims are made about DRM capture, privileged desktops, accessibility tools, or protection against physical access.
 
 ## Wire profile and resource bounds
@@ -38,6 +38,10 @@ No global hand-tracking permission is changed. Movement/hover, clicks/drag and s
 - The client uses the authenticated TLS peer's address and HELLO's authenticated UDP port. The server accepts feedback only from the TLS peer's address and READY's exact UDP port. Both validate AEAD before RTP/RTCP parsing.
 - The server echoes authenticated `PING` heartbeats. It sends `INPUT_STATE true|false` after START and each heartbeat; a live server input gate takes effect immediately, while headset controls reflect it within about three seconds. A gate cannot create missing portal permissions.
 - Control lines are capped at 4096 bytes, handshake/authentication have 5-second deadlines, idle/partial server reads have 10-second deadlines, and writes have a 3-second server deadline. Control message rate and RTCP processing are capped. Input queue overflow triggers explicit release-all instead of silently losing key/button releases.
+
+## Long-running sessions
+
+The wire counter is 64 bits, but both implementations enforce a lower per-key packet limit: valid counters are 1 through 2^32−1 for each direction of each authenticated monitor connection. There is no automatic rekey. Once the limit is reached, media protection refuses additional packets and that connection's media may stop; manually disconnect and reconnect to obtain fresh keys. This fails closed rather than reusing a nonce or falling back to plaintext. Time to exhaustion depends on packet rate, so there is no fixed guaranteed session duration.
 
 ## Automated verification
 

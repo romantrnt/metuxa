@@ -67,3 +67,7 @@ assert "input.releaseHeldKey(event)" in panel
 assert panel.index("input.releaseHeldKey(event)") < panel.index("focused instanceof android.widget.Button")
 assert "return super.dispatchKeyEvent(event);" in panel
 print("metuxa architecture: static invariants passed")
+
+# Keep the native palette and platform/dialog themes aligned without a device.
+import runpy
+runpy.run_path(str(root / "tests/theme-checks.py"))

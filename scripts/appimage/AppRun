@@ -1,0 +1,40 @@
+#!/bin/sh
+# No installation or automatic sharing. Explicit --server launches the server.
+set -eu
+APPDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export PATH="$APPDIR/usr/bin:$PATH"
+export LD_LIBRARY_PATH="$APPDIR/usr/lib"
+export XDG_DATA_DIRS="$APPDIR/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas"
+export FONTCONFIG_PATH="$APPDIR/usr/etc/fonts"
+export FONTCONFIG_FILE=fonts.conf
+    export FONTCONFIG_TEMPLATE_DIR="$APPDIR/usr/etc/fonts/conf.avail"
+export GIO_MODULE_DIR="$APPDIR/usr/lib/gio/modules"
+export PIPEWIRE_MODULE_DIR="$APPDIR/usr/lib/pipewire-0.3"
+export SPA_PLUGIN_DIR="$APPDIR/usr/lib/spa-0.2"
+export PIPEWIRE_CONFIG_DIR="$APPDIR/usr/share/pipewire"
+# Cairo is a portable UI renderer; this does not change video encoder selection.
+export GSK_RENDERER=${GSK_RENDERER:-cairo}
+export GTK_PATH="$APPDIR/usr/lib/gtk-4.0"
+case "${1:-}" in
+  --server) shift; exec "$APPDIR/usr/bin/metuxa-server" "$@" ;;
+  --help|--validate) exec "$APPDIR/usr/bin/metuxa-server" "$@" ;;
+esac
+# gdk-pixbuf's loader cache contains absolute paths. Keep each mount's cache
+# private and remove it on exit, including repeated/concurrent launches.
+cache=$(mktemp -d "${TMPDIR:-/tmp}/metuxa-loaders.XXXXXXXX")
+child=
+cleanup() { rm -f "$cache/loaders.cache"; rmdir "$cache" 2>/dev/null || :; }
+stop() { [ -z "$child" ] || kill -TERM "$child" 2>/dev/null || :; }
+trap cleanup EXIT
+trap stop TERM INT HUP
+sed "s|@APPDIR@|$APPDIR|g" "$APPDIR/usr/lib/gdk-pixbuf-loaders.cache.in" > "$cache/loaders.cache"
+export GDK_PIXBUF_MODULE_FILE="$cache/loaders.cache"
+"$APPDIR/usr/bin/metuxa-control" "$@" &
+child=$!
+set +e
+wait "$child"
+result=$?
+# A signal can interrupt wait before the child exits; wait for cleanup safely.
+if kill -0 "$child" 2>/dev/null; then wait "$child"; result=$?; fi
+exit "$result"

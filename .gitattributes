@@ -1,0 +1,2 @@
+# Unified patch context lines deliberately begin with a space.
+/scripts/appimage/fontconfig-template-dir.patch -whitespace

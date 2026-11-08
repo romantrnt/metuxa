@@ -29,21 +29,32 @@ final class QuestToolbar {
         pointer = QuestUi.button(activity, "Pointer: on", false); controls.addView(pointer); pointer.setOnClickListener(v -> { if (options.pointerActions()) callbacks.onPointerToggle(); else callbacks.onSettingsRequested(); });
         minus = QuestUi.button(activity, "−", false); minus.setContentDescription("Close the last monitor window"); minus.setOnClickListener(v -> callbacks.onScreenCountRequested(screenCount - 1));
         plus = QuestUi.button(activity, "+", false); plus.setContentDescription("Open another monitor window"); plus.setOnClickListener(v -> callbacks.onScreenCountRequested(screenCount + 1));
-        count = QuestUi.text(activity, "1 / 1", 14, QuestUi.MUTED); count.setPadding(12, 0, 12, 0);
+        count = QuestUi.text(activity, "1 / 1", 14, QuestUi.MUTED); count.setGravity(Gravity.CENTER); count.setPadding(QuestUi.dp(activity, 8), 0, QuestUi.dp(activity, 8), 0);
         if (primary) { controls.addView(minus); controls.addView(count); controls.addView(plus); }
         Button settings = QuestUi.button(activity, "Settings", false); controls.addView(settings); settings.setOnClickListener(v -> callbacks.onSettingsRequested());
         Button disconnect = QuestUi.button(activity, "Disconnect", false); disconnect.setTextColor(QuestUi.ERROR);
         disconnect.setContentDescription("Disconnect all metuxa screens"); disconnect.setOnClickListener(v -> callbacks.onDisconnectRequested());
+        for (int i = 0; i < controls.getChildCount(); i++) {
+            LinearLayout.LayoutParams item = new LinearLayout.LayoutParams(-2, -2);
+            if (i > 0) item.setMarginStart(QuestUi.dp(activity, 6)); controls.getChildAt(i).setLayoutParams(item);
+        }
         scroll.addView(controls, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.MATCH_PARENT));
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, QuestUi.dp(activity, 68), Gravity.BOTTOM);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, height(activity), Gravity.BOTTOM);
         // Disconnect is fixed in place, never hidden by overflow on a narrow panel.
         FrameLayout footer = new FrameLayout(activity); footer.setBackgroundColor(QuestUi.PANEL);
-        FrameLayout.LayoutParams scrollParams = new FrameLayout.LayoutParams(-1, -1); scrollParams.rightMargin = QuestUi.dp(activity, 138);
+        disconnect.measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED);
+        int disconnectWidth = Math.max(QuestUi.dp(activity, 132), disconnect.getMeasuredWidth());
+        FrameLayout.LayoutParams scrollParams = new FrameLayout.LayoutParams(-1, -1); scrollParams.setMarginEnd(disconnectWidth + QuestUi.dp(activity, 6));
         footer.addView(scroll, scrollParams);
-        FrameLayout.LayoutParams disconnectParams = new FrameLayout.LayoutParams(QuestUi.dp(activity, 132), QuestUi.dp(activity, 52), Gravity.END | Gravity.CENTER_VERTICAL);
-        disconnectParams.rightMargin = QuestUi.dp(activity, 4); footer.addView(disconnect, disconnectParams);
+        FrameLayout.LayoutParams disconnectParams = new FrameLayout.LayoutParams(disconnectWidth, -2, Gravity.END | Gravity.CENTER_VERTICAL);
+        disconnectParams.setMarginEnd(QuestUi.dp(activity, 4)); footer.addView(disconnect, disconnectParams);
+        android.view.View divider = new android.view.View(activity); divider.setBackgroundColor(QuestUi.BORDER);
+        footer.addView(divider, new FrameLayout.LayoutParams(-1, QuestUi.dp(activity, 1), Gravity.TOP));
         root.addView(footer, params);
         setScreenCount(1, 1); setInputOptions(new AppSettings(activity).inputOptions());
+    }
+    static int height(android.content.Context context) {
+        return QuestUi.dp(context, Math.max(68, 32 + 22 * context.getResources().getConfiguration().fontScale));
     }
     void setScreenCount(int current, int maximum) {
         screenCount = Math.max(1, current); count.setText(screenCount + " / " + maximum);
@@ -61,5 +72,5 @@ final class QuestToolbar {
         keyboard.setEnabled(options.keyboard); keyboard.setText(options.keyboard ? "Keyboard" : "Keyboard off");
         keyboard.setContentDescription(options.keyboard ? "Open remote keyboard" : "Remote keyboard disabled in settings");
     }
-    static void styleStatus(TextView text) { text.setTextSize(13); text.setTextColor(QuestUi.MUTED); text.setPadding(16, 10, 16, 10); }
+    static void styleStatus(TextView text) { text.setTextSize(13); text.setTextColor(QuestUi.MUTED); text.setPadding(QuestUi.dp(text.getContext(), 16), QuestUi.dp(text.getContext(), 10), QuestUi.dp(text.getContext(), 16), QuestUi.dp(text.getContext(), 10)); }
 }

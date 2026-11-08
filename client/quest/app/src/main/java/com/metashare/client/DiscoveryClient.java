@@ -45,9 +45,9 @@ final class DiscoveryClient {
                 if (!n.isUp() || n.isLoopback()) continue;
                 for (InterfaceAddress a : n.getInterfaceAddresses()) if (a.getBroadcast() instanceof Inet4Address) targets.add(a.getBroadcast().getHostAddress());
             }
-            Set<String> seen = new HashSet<>();
+            DiscoveryBudget budget = new DiscoveryBudget();
             long end = android.os.SystemClock.elapsedRealtime() + 4000, nextProbe = 0;
-            while (!cancelled && android.os.SystemClock.elapsedRealtime() < end) {
+            while (!cancelled && budget.hasCapacity() && android.os.SystemClock.elapsedRealtime() < end) {
                 long now = android.os.SystemClock.elapsedRealtime();
                 if (now >= nextProbe) {
                     for (String target : targets) try { s.send(new DatagramPacket(probe, probe.length, InetAddress.getByName(target), 7877)); } catch (Exception ignored) { }
@@ -55,6 +55,7 @@ final class DiscoveryClient {
                 }
                 byte[] data = new byte[256]; DatagramPacket packet = new DatagramPacket(data, data.length);
                 try { s.receive(packet); } catch (SocketTimeoutException e) { continue; }
+                if (!budget.consumeResponse()) break;
                 if (packet.getLength() != 80) continue;
                 boolean magic = true; for (int i = 0; i < MAGIC.length; i++) if (data[i] != MAGIC[i]) magic = false;
                 if (!magic) continue;
@@ -63,7 +64,7 @@ final class DiscoveryClient {
                 int port = Short.toUnsignedInt(b.getShort()), count = Short.toUnsignedInt(b.getShort());
                 if (port < 1 || port > 65533 || count < 1 || count > 3) continue;
                 HostEndpoint endpoint = new HostEndpoint(packet.getAddress().getHostAddress(), port);
-                if (!seen.add(endpoint.key()) || found >= 32) continue;
+                if (!budget.addHost(endpoint.key())) continue;
                 int length = 0; while (length < 64 && data[16 + length] != 0) length++;
                 String label = new String(data, 16, length, StandardCharsets.UTF_8).replaceAll("[\\p{Cntrl}\\p{Cf}]", "");
                 found++;

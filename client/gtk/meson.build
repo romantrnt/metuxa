@@ -12,9 +12,9 @@ control_tests = executable('metuxa-control-tests', files('tests/control_tests.cp
   include_directories : include_directories('.'), dependencies : [gtkmm_dep, json_glib_dep])
 test('metuxa-control', control_tests, timeout : 20)
 install_data('dev.metuxa.Control.desktop', install_dir : get_option('datadir') / 'applications')
-install_data('../../data/brand/metuxa-icon.svg',
-  install_dir : get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',
-  rename : 'dev.metuxa.Control.svg')
+install_data('../../data/branding/metuxa-tux.png',
+  install_dir : get_option('datadir') / 'icons' / 'hicolor' / '512x512' / 'apps',
+  rename : 'dev.metuxa.Control.png')
 
 # Explicit isolated UI QA target. Not a default test: requires private Weston.
 executable('metuxa-ui-tests', files('tests/ui_tests.cpp', 'main_window.cpp') + control_sources,

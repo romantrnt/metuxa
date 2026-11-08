@@ -23,3 +23,18 @@
 /build-*/
 /test-output/
 /dist/
+
+# Release secrets and generated packaging inputs stay outside Git.
+*.jks
+*.keystore
+*.p12
+*.pem
+/signing/
+/release-work/
+
+# Isolated AppImage build inputs and intermediate artifacts
+/.release-work/
+
+# Python checks do not belong to source releases
+__pycache__/
+*.pyc

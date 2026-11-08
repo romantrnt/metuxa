@@ -18,8 +18,28 @@ public final class CoreTests {
         boolean has(String e) { return events.contains(e); }
     }
     public static void main(String[] args) {
-        endpoint(); policy(); granularActions(); pointer(); multiSourceOwnership(); ownershipWithoutClicks(); auxiliaryButtonOwnership(); nativeFocusKeyRelease(); keyboard(); textQueue(); lifecycle(); diagnostics();
+        discoveryBudget(); endpoint(); policy(); granularActions(); pointer(); multiSourceOwnership(); ownershipWithoutClicks(); auxiliaryButtonOwnership(); nativeFocusKeyRelease(); keyboard(); textQueue(); lifecycle(); diagnostics();
         System.out.println("metuxa core: " + assertions + " assertions passed");
+    }
+    private static void discoveryBudget() {
+        DiscoveryBudget budget = new DiscoveryBudget();
+        for (int i = 0; i < DiscoveryBudget.MAX_HOSTS; i++) {
+            check(budget.consumeResponse(), "discovery receives host within budget");
+            check(budget.addHost("192.0.2." + i + ":7878"), "discovery retains host within cap");
+        }
+        for (int i = 32; i < 10000; i++) {
+            if (budget.addHost("192.0.2.1:" + i)) throw new AssertionError("unbounded discovery hosts");
+        }
+        check(budget.hostCount() == 32, "spoofed endpoint flood never expands retained set");
+        check(!budget.hasCapacity() && !budget.consumeResponse(), "host saturation stops scan work");
+        DiscoveryBudget duplicates = new DiscoveryBudget();
+        for (int i = 0; i < DiscoveryBudget.MAX_RESPONSES; i++) {
+            check(duplicates.consumeResponse(), "duplicate or malformed reply consumes packet budget");
+            duplicates.addHost("192.0.2.1:7878");
+        }
+        check(duplicates.hostCount() == 1, "duplicate hosts retained once");
+        check(duplicates.responseCount() == 256 && !duplicates.consumeResponse(), "malformed and duplicate flood bounded");
+        check(new DiscoveryBudget().hasCapacity(), "next scan has an independent budget");
     }
     private static void endpoint() {
         check(new HostEndpoint(" PC.local ",7878).key().equals("pc.local:7878"), "hostname normalization");

@@ -37,6 +37,12 @@ meson test -C build-sanitize --print-errorlogs
 
 Synthetic server integration must use a separate network namespace, no session bus/display/PipeWire access, software encoding, and test-pattern/test-tone sources. GUI smoke tests use a private headless compositor/session. Never mistake these tests for real portal, GPU or Quest validation.
 
-## Packaging
+## Release packaging
 
-The local test bundle contains the server, control app, required local sdbus library, launcher, APK, source snapshot, checksums and verification report. It neither installs nor starts automatically. AppImage generation and a release APK/repository publication are deliberately deferred until the live test and explicit release instruction. The Nix/Flatpak recipes have been adapted to metuxa identities and pinned source dependencies, but were not rebuilt in this native test pass. They are not proof of a tested public package.
+The Linux release is an x86_64 AppImage built in a private Ubuntu 24.04 container, not a copy of this laptop's Arch/Garuda libraries. Its AppImage runtime is separately rebuilt from pinned official source in Alpine. It includes the control application, server, Tux icon, required library/plugin closure, full license texts and source inventories. It does not install a service or start sharing automatically.
+
+See [APPIMAGE.md](APPIMAGE.md) for the complete build sequence, source collection, artifact tests and compatibility limits. The baseline is glibc 2.39 (Ubuntu 24.04); older LTS distributions are not supported by this build. Hardware drivers, desktop portal and PipeWire services remain host interfaces.
+
+The release must include the exact metuxa source archive and dependency-source archive alongside the AppImage because the server uses a GPL-enabled FFmpeg/x264 configuration. The source MIT `LICENSE` remains unchanged; [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md) explains the combined-binary license.
+
+Android signing/versioning and publication checks are documented in [RELEASING.md](RELEASING.md). `scripts/package-native-test.sh` remains a host-specific developer test-folder helper, not the public AppImage packager. The Nix/Flatpak recipes are alternative build recipes; this release pass does not certify rebuilt Nix or Flatpak packages.

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Neutral graphite throughout, including platform widgets and dialogs. -->
+    <color name="quest_background">#181818</color>
+    <color name="quest_panel">#242424</color>
+    <color name="quest_field">#303030</color>
+    <color name="quest_hover">#414141</color>
+    <color name="quest_border">#3E3E3E</color>
+    <color name="quest_outline">#858585</color>
+    <color name="quest_text">#F2F2F2</color>
+    <color name="quest_muted">#BDBDBD</color>
+    <color name="quest_accent">#DEDEDE</color>
+    <color name="quest_ink">#202020</color>
+    <color name="quest_disabled">#858585</color>
+    <color name="quest_error">#FFB4A8</color>
+    <color name="quest_ripple">#24FFFFFF</color>
+    <color name="quest_selection">#66DEDEDE</color>
+</resources>

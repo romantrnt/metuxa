@@ -1,0 +1,47 @@
+{
+  "ubuntu_image": "docker.io/library/ubuntu@sha256:78d4744ead1f5b19b04d0df558ab182a5300903900755e515b2ca4d10eb2044d",
+  "baseline": "Ubuntu 24.04 x86_64, glibc 2.39",
+  "source_date_epoch": 1794096000,
+  "git_sources": [
+    {
+      "name": "ffmpeg",
+      "repository": "https://github.com/FFmpeg/FFmpeg.git",
+      "commit": "3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587",
+      "file": "ffmpeg-3a0867c2.tar.gz",
+      "sha256": "0f9e9d71d7cf899cc7c373a99971ff38b8c786dcdda7ef11e53195b683550440"
+    },
+    {
+      "name": "x264",
+      "repository": "https://code.videolan.org/videolan/x264.git",
+      "commit": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+      "file": "x264-b35605ac.tar.gz",
+      "sha256": "3670ea76a93ef2dfb7d647e42f259ce5be0d9bca73202c998161fb2f35fc1d7f"
+    },
+    {
+      "name": "nv-codec-headers",
+      "repository": "https://github.com/FFmpeg/nv-codec-headers.git",
+      "commit": "157becbf51c8b813425572b75c06c370bd43d8fd",
+      "file": "nv-codec-headers-157becbf.tar.gz",
+      "sha256": "4bdc969f3e7135ce8fd76e2f2828aefe1ab1cec19a74d3e2149dcf7b969a9cf3"
+    },
+    {
+      "name": "sdbus-cpp",
+      "repository": "https://github.com/Kistler-Group/sdbus-cpp.git",
+      "commit": "30d9f1d46258c2be4ce29b7f7f168ecdf6d4f328",
+      "file": "sdbus-cpp-30d9f1d4.tar.gz",
+      "sha256": "32438e5f448b1bab52d891270312db57f0ef607915592c1c4bb008b7092cc525"
+    }
+  ],
+  "appimage_runtime": {
+    "source_commit": "fedfad51acc2860b2916a1eef32ba4a500ff31ef",
+    "source_url": "https://api.github.com/repos/AppImage/type2-runtime/tarball/fedfad51acc2860b2916a1eef32ba4a500ff31ef",
+    "source_file": "appimage-runtime-fedfad51.tar.gz",
+    "source_sha256": "a1601c596b81768626afca9abecf0137092d2d7b281bb6c4b9067d2c79e44a21",
+    "reference_binary_url": "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64",
+    "reference_binary_sha256": "617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46",
+    "shipped_binary": "Locally rebuilt from source with scripts/appimage/build-runtime.sh",
+    "rebuilt_binary_sha256": "512226a53221791f148c2427af3401858a40cbabf8ede61b123b50d7238a14d9"
+  },
+  "alpine_image": "docker.io/library/alpine@sha256:2d8a11041a92082ba21e364dec73559ce44f1de69b60fa68315f6d3774e59117",
+  "alpine_aports_commit": "c2eb7755270e927dc5ee94aa9228cb95061afe35"
+}
