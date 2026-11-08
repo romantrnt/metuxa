@@ -61,7 +61,10 @@ public final class MainActivity extends Activity {
     }
     @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(QuestUi.themedContext(base)); }
     @Override protected void onCreate(Bundle state) {
-        super.onCreate(state); settings = new AppSettings(this); updater = new UpdateManager(this);
+        super.onCreate(state);
+        // Runtime version text is independent of the stable manifest label.
+        setTitle(R.string.app_version_label);
+        settings = new AppSettings(this); updater = new UpdateManager(this);
         appliedTheme = settings.theme(); appliedScale = settings.textScale(); appliedUiMode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         buildUi();
@@ -185,7 +188,7 @@ public final class MainActivity extends Activity {
         diagnostics.setOnCheckedChangeListener((b, checked) -> coordinator.diagnostics.setEnabled(checked));
         controls.addView(QuestUi.text(this, "Keeps up to 80 pointer metadata samples in memory. It does not record positions, typing or screenshots.", 13, QuestUi.color(this, R.color.quest_muted)));
         QuestUi.space(controls, 12); Button inspect = QuestUi.button(this, "Inspect / reset metadata", false); controls.addView(inspect, new LinearLayout.LayoutParams(-1, -2)); inspect.setOnClickListener(v -> showDiagnostics());
-        QuestUi.space(page, 18); page.addView(QuestUi.text(this, getString(R.string.app_name), 13, QuestUi.color(this, R.color.quest_muted)));
+        QuestUi.space(page, 18); page.addView(QuestUi.text(this, getString(R.string.app_version_label), 13, QuestUi.color(this, R.color.quest_muted)));
         scroll.addView(page); setContentView(scroll);
     }
     private EditText field(LinearLayout parent, String label, String hint, boolean secret) {
@@ -316,7 +319,7 @@ public final class MainActivity extends Activity {
         if (themeChanged()) { getIntent().putExtra("updates", true); refreshTheme(); return; }
         if (updateDialog != null && updateDialog.isShowing()) return;
         LinearLayout content = QuestUi.column(this); int pad = QuestUi.dp(this, 20); content.setPadding(pad, pad, pad, pad);
-        updateStatus = QuestUi.text(this, getString(R.string.app_name) + "\n" + UpdateManager.lastInstallStatus(this), 15, QuestUi.color(this, R.color.quest_text)); content.addView(updateStatus);
+        updateStatus = QuestUi.text(this, getString(R.string.app_version_label) + "\n" + UpdateManager.lastInstallStatus(this), 15, QuestUi.color(this, R.color.quest_text)); content.addView(updateStatus);
         Button check = QuestUi.button(this, "Check now", false); content.addView(check); check.setOnClickListener(v -> checkUpdates(false));
         installUpdate = QuestUi.button(this, "Download and install", true); content.addView(installUpdate); installUpdate.setEnabled(availableUpdate != null);
         installUpdate.setOnClickListener(v -> installUpdate());

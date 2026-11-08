@@ -41,6 +41,43 @@ public class ThemeRenderTest {
     @Test public void narrowLauncher() throws Exception { exercise("narrow", 480, 1000, 1f); }
     @Test public void largeFontLauncher() throws Exception { exercise("large-font", 360, 800, 1.5f); }
 
+    @Test public void stablePackageLabelsAndVersionedUi() throws Exception {
+        RuntimeEnvironment.setQualifiers("w480dp-h900dp-mdpi"); RuntimeEnvironment.setFontScale(1f);
+        android.app.Application app = RuntimeEnvironment.getApplication();
+        android.content.pm.PackageManager pm = app.getPackageManager();
+        String packageName = app.getPackageName();
+        assertEquals("dev.metuxa.quest", packageName);
+        assertEquals("metuxa", pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString());
+        for (Class<?> type : new Class<?>[] {MainActivity.class, StreamActivity.class, MonitorActivity.class}) {
+            android.content.pm.ActivityInfo info = pm.getActivityInfo(new android.content.ComponentName(app, type), 0);
+            assertEquals("Manifest activity label stays version-free", "metuxa", info.loadLabel(pm).toString());
+        }
+        Intent launch = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(packageName);
+        android.content.pm.ResolveInfo resolved = pm.resolveActivity(launch, 0);
+        assertNotNull(resolved); assertEquals(MainActivity.class.getName(), resolved.activityInfo.name);
+        assertEquals("Launcher intent label stays version-free", "metuxa", resolved.loadLabel(pm).toString());
+        String version = "metuxa v" + pm.getPackageInfo(packageName, 0).versionName;
+        assertEquals("Runtime text follows the packaged version", version, app.getString(R.string.app_version_label));
+        AppSettings preferences = new AppSettings(app); preferences.preferences.edit().clear().commit(); preferences.flag("discover_on_open", false);
+        ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class, new Intent(app, MainActivity.class).putExtra("manage", true)).create().start().resume().visible();
+        MainActivity activity = controller.get(); assertEquals(version, activity.getTitle().toString());
+        View root = ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0); layout(root, 480, 900);
+        assertNotNull("Launcher footer retains the installed version", find(root, version, TextView.class));
+        find(root, "Settings", Button.class).performClick(); AlertDialog settings = ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull("Settings retains the installed version", find(settings.getWindow().getDecorView(), version, TextView.class));
+        settings.getButton(AlertDialog.BUTTON_POSITIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle();
+        controller.recreate(); activity = controller.get();
+        assertEquals("Runtime title survives recreation", version, activity.getTitle().toString());
+        root = ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0);
+        assertNotNull("Footer version survives recreation", find(root, version, TextView.class));
+        find(root, "Settings", Button.class).performClick(); settings = ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull("Settings version survives recreation", find(settings.getWindow().getDecorView(), version, TextView.class));
+        settings.getButton(AlertDialog.BUTTON_POSITIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("Runtime titles do not change package metadata", "metuxa", pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString());
+        assertEquals("Runtime titles do not change launcher metadata", "metuxa", pm.resolveActivity(launch, 0).loadLabel(pm).toString());
+        controller.pause().stop().destroy();
+    }
+
     @Test public void toolbarLayoutsAndActions() throws Exception {
         for (int width : new int[] { 800, 360 }) {
             RuntimeEnvironment.setQualifiers("w" + width + "dp-h200dp-night-mdpi");
@@ -232,6 +269,7 @@ public class ThemeRenderTest {
         // Do not attach the TextureView or invoke surface availability: no media, sockets or discovery.
         ActivityController<StreamActivity> controller = Robolectric.buildActivity(StreamActivity.class, intent).create();
         StreamActivity activity = controller.get(); RemoteSurfaceView surface = ReflectionHelpers.getField(activity, "surface");
+        assertEquals(activity.getString(R.string.app_version_label), activity.getTitle().toString());
         assertEquals("Legacy image rotation must not tilt physical desktops", 0f, surface.getRotation(), 0f);
         ReflectionHelpers.callInstanceMethod(activity, "updateStreamSize", ReflectionHelpers.ClassParameter.from(int.class, 1080), ReflectionHelpers.ClassParameter.from(int.class, 1920));
         assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, activity.getRequestedOrientation());

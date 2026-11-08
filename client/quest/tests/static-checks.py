@@ -86,7 +86,22 @@ assert "setOnHoverListener((v, e) -> capturePointer(e))" in capture
 assert "setOnHoverListener(null)" in capture
 assert "!isChangingConfigurations()" in panel
 assert "pairingDialog == dialog" in main and "attempt[0].confirm()" in main
-assert '"metuxa v${versionName}"' in (root / "app/build.gradle").read_text()
+# Package, activity and intent-filter metadata must never carry release versions.
+# Activities/filters inherit the stable application label unless explicitly set.
+assert app.get(a + "label") == "@string/app_name"
+for element in app.iter():
+    if element.get(a + "label") is not None:
+        assert element.get(a + "label") == "@string/app_name"
+names = [entry for path in (root / "app/src/main/res").glob("values*/*.xml")
+         for entry in ET.parse(path).getroot() if entry.get("name") == "app_name"]
+assert len(names) == 1 and names[0].text == "metuxa" and names[0].get("translatable") == "false"
+gradle = (root / "app/build.gradle").read_text()
+assert "resValue 'string', 'app_name'" not in gradle
+assert 'resValue \'string\', \'app_version_label\', "metuxa v${versionName}"' in gradle
+for activity in (main, panel):
+    assert "setTitle(R.string.app_version_label)" in activity
+for ui in (main, (src / "SettingsDialog.java").read_text()):
+    assert "getString(R.string.app_version_label)" in ui and "R.string.app_name" not in ui
 
 renderer = (src / "RemoteSurfaceView.java").read_text()
 assert "extends TextureView" in renderer and "return false;" in renderer

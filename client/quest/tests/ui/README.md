@@ -33,8 +33,10 @@ image is installed.
 
 ## Coverage and output
 
-Twenty-one test cases cover:
+Twenty-two test cases cover:
 
+- Stable application, Activity and launcher-intent labels, with the packaged
+  version retained in the runtime title, launcher footer and Settings after recreation.
 - Launcher layouts at 1200 × 1000, 480 × 1000, and 360 × 800 with 150% font.
 - Wide → narrow → wide resizing, minimum touch targets, label height and gaps.
 - The last launcher section and last settings control remain reachable by

@@ -38,7 +38,10 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
     abstract boolean primary();
     @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(QuestUi.themedContext(base)); }
     @Override protected void onCreate(Bundle state) {
-        super.onCreate(state); settings = new AppSettings(this); appliedTheme = settings.theme(); appliedScale = settings.textScale(); appliedUiMode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        super.onCreate(state);
+        // Runtime version text is independent of the stable manifest label.
+        setTitle(R.string.app_version_label);
+        settings = new AppSettings(this); appliedTheme = settings.theme(); appliedScale = settings.textScale(); appliedUiMode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
         generation = getIntent().getLongExtra("generation", -1);
         monitorIndex = primary() ? 0 : getIntent().getIntExtra("monitor_index", -1);
         connection = coordinator.current();

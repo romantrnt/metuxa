@@ -33,6 +33,43 @@ The APK package, version and signer must match the signed release and the pinned
 
 Close/cancel stops a download and prevents callbacks into a destroyed UI. Android continues an already committed installation independently. Complete or cancel an outstanding installer prompt before starting another install. Device testing must cover permission denial, confirmation cancellation, process death, insufficient storage and successful upgrade over the previous signed APK.
 
+## Quest library name and installed version
+
+Published 0.3.0 and 0.4.0 APKs used `metuxa vVERSION` as the Android application
+label. A successful 0.3.0 → 0.4.0 headset upgrade was reported with `metuxa v0.3.0`
+still in Unknown Sources while the running window showed 0.4.0. This is consistent
+with a stale Horizon library entry; it is not evidence that the APK failed to
+update. That particular headset cache has not been inspected directly.
+
+New source builds separate persistent identity from runtime version text:
+
+- `@string/app_name` is the fixed, non-translatable `metuxa` application label.
+  Activities and launcher intent filters inherit it without a version override.
+- Gradle generates `@string/app_version_label` from `versionName` for the launcher
+  footer, Settings, initial Updates status and the running Activities' requested
+  window title.
+  Check the in-app version or Android's installed-package version, not an old
+  Unknown Sources label. Horizon may ignore the requested window title.
+- The package ID, launcher component, signing identity, version/code and stored
+  preferences are unchanged by this source fix. No alias rotation, component
+  disabling, uninstall, data clear or Home restart is used to force a refresh.
+
+Android documents [Activity-label inheritance](https://developer.android.com/guide/topics/manifest/activity-element#label)
+and [intent-filter-label inheritance](https://developer.android.com/guide/topics/manifest/intent-filter-element#label).
+These describe package metadata, not when Horizon refreshes Unknown Sources.
+No documented app-level guarantee of an immediate Horizon refresh was found.
+The stable label prevents future release numbers from becoming stale once the
+library has reread it; it cannot evict an older cached label by itself.
+
+The published 0.4.0 APK is not changed retroactively. Delivery of this fix requires
+a later authorized release with the normal version/code bump and same signer.
+After that in-place update, first reopen the library. If its old label persists,
+a normal headset restart when no session is in use is a non-destructive check,
+not a guaranteed cure or a requirement for the app update. Do not force-stop
+Home during an active session, clear Home or metuxa data, uninstall metuxa, or
+factory-reset the headset to fix a cosmetic label. Preferences and pairing data
+must survive the normal signed upgrade.
+
 ## Linux installation
 
 Automatic replacement supports the running x86_64 AppImage. A native package, missing `APPIMAGE`, read-only file, symlink, hard link or directory writable by other users requires a manual update. Move the AppImage to a private writable folder you own if needed.

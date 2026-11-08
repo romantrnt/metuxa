@@ -6,6 +6,16 @@ The separate package `dev.metuxa.quest` can coexist with the original
 `com.metashare.client` installation. Source namespace remains
 `com.metashare.client` to preserve continuity with MetaShare.
 
+## App name and version
+
+Source builds after 0.4.0 use the stable Android application/launcher label
+**metuxa**. The installed version stays in the launcher footer and **Settings**;
+the running Activities also request a versioned window title. Horizon controls
+its outer window decoration and library cache, so those shell surfaces are not
+an authoritative version check. Published 0.4.0 and earlier APKs used a versioned
+application label. See [library-name migration](../../docs/UPDATES.md#quest-library-name-and-installed-version)
+for safe upgrade expectations.
+
 ## Connect
 
 1. Start the metuxa desktop server. Choose the monitors, audio and remote-input

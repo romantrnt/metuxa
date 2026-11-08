@@ -46,7 +46,7 @@ final class SettingsDialog {
         checkUpdates.setOnCheckedChangeListener((b, enabled) -> { settings.flag("auto_check_updates", enabled); downloads.setEnabled(enabled); });
         note(content, "Checks run at most once a day while the launcher is open. Android will still ask you to install. Updates never install during a connection.");
         android.widget.Button update = QuestUi.button(activity, "Check for updates", false); content.addView(update, new LinearLayout.LayoutParams(-1, -2));
-        QuestUi.space(content, 12); note(content, activity.getString(R.string.app_name));
+        QuestUi.space(content, 12); note(content, activity.getString(R.string.app_version_label));
         ScrollView scroll = new ScrollView(activity); scroll.addView(content);
         AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("Settings").setView(scroll).setPositiveButton("Done", null).create();
         dialog.setOnDismissListener(d -> changed.run());
