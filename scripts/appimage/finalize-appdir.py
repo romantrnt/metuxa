@@ -46,12 +46,12 @@ shutil.copyfile(work/'sources/SOURCE-INDEX.json',metadata/'SOURCE-INDEX.json')
 source_files=[]
 for name in ['src','client/gtk','client/desktop_test','tests','data/branding']:
     for p in sorted((root/name).rglob('*')):
-        if p.is_file() and p.suffix in {'.cpp','.hpp','.h','.build','.png','.svg'}:
+        if p.is_file() and p.suffix in {'.cpp','.hpp','.h','.build','.png','.svg','.xml'}:
             source_files.append((str(p.relative_to(root)),hashlib.sha256(p.read_bytes()).hexdigest()))
 for name in ['meson.build','meson_options.txt']:
     source_files.append((name,hashlib.sha256((root/name).read_bytes()).hexdigest()))
 (metadata/'application-source.sha256').write_text(''.join(f'{h}  {name}\n' for name,h in sorted(source_files)))
-(metadata/'BUILD-INFO.txt').write_text('metuxa 0.4.1 x86_64 AppImage\nUbuntu 24.04 baseline, host glibc >= 2.39\nFFmpeg GPLv3 configuration; nonfree disabled\nRuntime rebuilt locally from pinned official AppImage source, not an official signed AppImage binary\nCorresponding source: metuxa-0.4.1-source.tar.gz AND metuxa-0.4.1-dependency-sources.tar.gz in the same release\n')
+(metadata/'BUILD-INFO.txt').write_text('metuxa 0.4.2 x86_64 AppImage\nUbuntu 24.04 baseline, host glibc >= 2.39\nFFmpeg GPLv3 configuration; nonfree disabled\nRuntime rebuilt locally from pinned official AppImage source, not an official signed AppImage binary\nCorresponding source: metuxa-0.4.2-source.tar.gz AND metuxa-0.4.2-dependency-sources.tar.gz in the same release\n')
 files=[]
 for p in sorted(app.rglob('*')):
     if p.is_file() and p.name!='FILES.sha256':

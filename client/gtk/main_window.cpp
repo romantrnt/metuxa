@@ -10,6 +10,10 @@ using namespace metuxa::control;
 namespace {
 constexpr const char* sources[] = {"portal", "window", "mutter", "test"};
 const char* css = R"css(
+  .metuxa-version { font-size: 12px; font-weight: 400; color: alpha(@theme_fg_color, 0.60); }
+  .about-brand { font-size: 36px; font-weight: 800; letter-spacing: -1px; }
+  .app-menu { padding: 6px; }
+  .app-menu button { padding: 10px 14px; border-radius: 8px; }
   .metuxa-brand { font-size: 24px; font-weight: 800; letter-spacing: -1px; }
   .session-panel { background-color: alpha(@theme_fg_color, 0.045); border-radius: 16px; padding: 22px; }
   .session-title { font-size: 23px; font-weight: 700; }
@@ -50,7 +54,7 @@ MainWindow::MainWindow() {
     system_appearance_ = std::make_unique<SystemAppearance>([this] {
         if (preferences_.theme == "system") apply_theme();
     });
-    build_ui(); build_preferences(); load_widgets(); apply_preferences();
+    build_ui(); build_preferences(); build_about(); load_widgets(); apply_preferences();
     if (preferences_.remember_window) set_default_size(preferences_.window_width, preferences_.window_height);
     if (!warning.empty()) append_log(warning);
     server_.on_log = [this](const auto& line) { append_log(line); };
@@ -92,16 +96,27 @@ Gtk::Widget& MainWindow::row(const std::string& title, const std::string& detail
     box->append(*text); box->append(control); return *box;
 }
 void MainWindow::build_ui() {
-    set_title(std::string("metuxa v") + METUXA_VERSION); set_default_size(780, 850); set_size_request(620, 620);
+    set_title("metuxa 🐧"); set_default_size(780, 850); set_size_request(620, 620);
     set_icon_name("dev.metuxa.Control");
     auto provider = Gtk::CssProvider::create(); provider->load_from_data(css);
     Gtk::StyleProvider::add_provider_for_display(Gdk::Display::get_default(), provider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    auto* brand = Gtk::make_managed<Gtk::Label>("metuxa"); brand->add_css_class("metuxa-brand");
+    auto* brand = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 9);
+    auto* name = Gtk::make_managed<Gtk::Label>("metuxa"); name->add_css_class("metuxa-brand");
+    auto* version = Gtk::make_managed<Gtk::Label>(METUXA_VERSION); version->add_css_class("metuxa-version");
+    version->set_valign(Gtk::Align::CENTER); brand->append(*name); brand->append(*version);
     header_.pack_start(*brand); header_.set_show_title_buttons(true);
-    auto* context = Gtk::make_managed<Gtk::Label>("Server control"); context->add_css_class("dim-label"); header_.set_title_widget(*context);
-    header_.pack_end(preferences_button_); preferences_button_.signal_clicked().connect([this] { stack_.set_visible_child("preferences"); });
-    header_.pack_end(diagnostics_button_); diagnostics_button_.add_css_class("flat");
-    diagnostics_button_.signal_clicked().connect(sigc::mem_fun(*this, &MainWindow::save_diagnostics));
+    auto* context = Gtk::make_managed<Gtk::Label>("Server"); context->add_css_class("dim-label"); header_.set_title_widget(*context);
+    menu_button_.set_icon_name("view-more-symbolic"); menu_button_.set_tooltip_text("Main menu");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(menu_button_.gobj()), GTK_ACCESSIBLE_PROPERTY_LABEL, "Main menu", -1);
+    menu_button_.set_popover(menu_popover_); header_.pack_end(menu_button_);
+    auto* menu = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 2); menu->add_css_class("app-menu");
+    for (auto* button : {&preferences_button_, &about_button_, &diagnostics_button_}) {
+        button->add_css_class("flat"); button->set_halign(Gtk::Align::FILL); menu->append(*button);
+    }
+    menu_popover_.set_child(*menu);
+    preferences_button_.signal_clicked().connect([this] { menu_popover_.popdown(); open_preferences(); });
+    about_button_.signal_clicked().connect([this] { menu_popover_.popdown(); open_about(); });
+    diagnostics_button_.signal_clicked().connect([this] { menu_popover_.popdown(); save_diagnostics(); });
     set_titlebar(header_);
     auto* root = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 18);
     root->set_margin(24);

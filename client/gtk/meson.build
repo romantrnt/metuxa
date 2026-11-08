@@ -7,8 +7,10 @@ if not gtkmm_dep.found() or not json_glib_dep.found()
 endif
 update_deps = [dependency('libcurl', version : '>=7.85'), dependency('openssl'), dependency('threads')]
 update_args = ['-DMETUXA_VERSION="' + meson.project_version() + '"']
+branding = import('gnome').compile_resources('metuxa-branding', 'metuxa.gresource.xml',
+  source_dir : '../../data/branding', c_name : 'metuxa_branding', export : true)
 control_sources = files('control_model.cpp', 'app_preferences.cpp', 'server_process.cpp', 'update_manager.cpp', 'system_appearance.cpp')
-executable('metuxa-control', files('main.cpp', 'main_window.cpp', 'main_preferences.cpp') + control_sources,
+executable('metuxa-control', files('main.cpp', 'main_window.cpp', 'main_preferences.cpp') + control_sources + branding,
   cpp_args : update_args, dependencies : [gtkmm_dep, json_glib_dep] + update_deps, install : true)
 control_tests = executable('metuxa-control-tests', files('tests/control_tests.cpp') + control_sources,
   include_directories : include_directories('.'), cpp_args : update_args, dependencies : [gtkmm_dep, json_glib_dep] + update_deps)
@@ -19,7 +21,7 @@ install_data('../../data/branding/metuxa-tux.png',
   rename : 'dev.metuxa.Control.png')
 
 # Explicit isolated UI QA target. Not a default test: requires private Weston.
-executable('metuxa-ui-tests', files('tests/ui_tests.cpp', 'main_window.cpp', 'main_preferences.cpp') + control_sources,
+executable('metuxa-ui-tests', files('tests/ui_tests.cpp', 'main_window.cpp', 'main_preferences.cpp') + control_sources + branding,
   include_directories : include_directories('.'), cpp_args : update_args, dependencies : [gtkmm_dep, json_glib_dep] + update_deps)
 
 update_tests = executable('metuxa-update-tests', files('tests/update_tests.cpp', 'update_manager.cpp'),

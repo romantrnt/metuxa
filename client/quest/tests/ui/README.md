@@ -1,10 +1,9 @@
 # Opt-in native Android UI checks
 
-This suite renders the **real Android Views** using Robolectric 4.14.1, Android
-API 34 and native graphics. It is not a screenshot from Quest/Horizon OS and
-does not verify MediaCodec, physical input, the IME, audio or live streaming.
-It never installs an APK, uses adb, launches a stream or discovers LAN hosts.
-MainActivity's initial discovery is suppressed before its real resume callback.
+This suite renders native Android Views using Robolectric 4.14.1, Android
+API 34 and native graphics. It runs locally without installing an APK, using
+adb, launching a stream or discovering LAN hosts. MainActivity's initial
+discovery is suppressed before its resume callback.
 
 The optional Gradle init script adds JUnit/Robolectric **test dependencies only
 for this invocation**. Normal builds, production runtime dependencies and the
@@ -33,10 +32,13 @@ image is installed.
 
 ## Coverage and output
 
-Twenty-two test cases cover:
+The test cases cover:
 
 - Stable application, Activity and launcher-intent labels, with the packaged
-  version retained in the runtime title, launcher footer and Settings after recreation.
+  version beside the launcher brand and in Settings after recreation.
+- APK archive rejection for old/unrelated IDs, mismatched versions and missing signers.
+- Launcher and monitor overflow actions, repeated menu/About requests, Close/Back,
+  About artwork, working GitHub/credits intents and scrollable links at large text.
 - Launcher layouts at 1200 × 1000, 480 × 1000, and 360 × 800 with 150% font.
 - Wide → narrow → wide resizing, minimum touch targets, label height and gaps.
 - The last launcher section and last settings control remain reachable by
@@ -48,10 +50,9 @@ Twenty-two test cases cover:
   authenticated dimensions request portrait/landscape without tilting the View.
 - Physical-source explanation, virtual orientation dialog cancellation, per-PC
   size persistence, bounded launch hints and native settings-row menus.
-- The renderer's existing inverse Android touch/hover transform at four angles.
-  This is a low-level regression test, not an exposed image-rotation feature.
-  These tests do not decode video or prove Horizon panel sizing.
-- Overlay timing, pinned Controls handle, local focus release, return to remote typing and the fixed More menu.
+- The renderer's inverse Android touch/hover transform at four angles.
+  Image rotation is not exposed in the app.
+- Overlay timing, pinned Controls handle, local focus release, return to remote typing and the fixed three-dot menu.
 - Metadata probe parsing, AUTH-only output, background close-before-callback,
   cancellation, expiry fallback, duplicate starts, stale generation suppression,
   and returning to an active stream without a probe. Probe tests use fake TLS
@@ -71,5 +72,5 @@ child on the same background. Dialogs use explicit bounded dimensions; toolbar
 renders isolate the real component. All test addresses are reserved documentation
 addresses and pairing fields stay empty. Generated renders are not checked in.
 
-Visually inspect the output when changing layout or styling. Passing this suite
-supplements, and does not replace, the [headset acceptance checklist](../../../../docs/MANUAL-TESTS.md).
+Visually inspect the output when changing layout or styling. For device tests,
+follow the [headset acceptance checklist](../../../../docs/MANUAL-TESTS.md).

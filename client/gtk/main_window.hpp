@@ -20,6 +20,9 @@ private:
     friend struct ControlUiTest;
     void build_ui();
     void build_preferences();
+    void build_about();
+    void open_preferences();
+    void open_about();
     void apply_preferences();
     void apply_theme();
     void preferences_changed();
@@ -75,7 +78,11 @@ private:
     Gtk::DropDown theme_, updates_, check_interval_;
     Gtk::SpinButton text_scale_;
     Gtk::Switch animations_, auto_scroll_, remember_window_;
-    Gtk::Button preferences_button_{"Settings"}, check_update_{"Check now"}, download_update_{"Download update"}, install_update_{"Install update"}, cancel_update_{"Cancel download"}, skip_update_{"Skip this version"};
+    Gtk::MenuButton menu_button_;
+    Gtk::Popover menu_popover_;
+    Gtk::Window preferences_window_, about_window_;
+    Gtk::Button preferences_button_{"Settings"}, about_button_{"About metuxa"};
+    Gtk::Button check_update_{"Check now"}, download_update_{"Download update"}, install_update_{"Install update"}, cancel_update_{"Cancel download"}, skip_update_{"Skip this version"};
     Gtk::Label update_status_, update_detail_;
     Gtk::ProgressBar update_progress_;
     Gtk::Box pair_request_box_{Gtk::Orientation::VERTICAL, 12};

@@ -14,7 +14,7 @@ OUTPUT=$(realpath -m "$2")
 [[ -f "$SIGNING_DIR/metuxa-release.p12" && -f "$SIGNING_DIR/keystore.password" ]] || { echo 'Existing private release identity required' >&2; exit 2; }
 [[ ! -e "$OUTPUT" ]] || { echo 'Output exists; choose a new path rather than overwriting a published artifact' >&2; exit 2; }
 badging=$("$BUILD_TOOLS/aapt" dump badging "$INPUT")
-[[ "$badging" == *"package: name='dev.metuxa.quest'"* ]] || { echo 'Unexpected application ID' >&2; exit 2; }
+[[ "$badging" == *"package: name='io.github.romantrnt.metuxa'"* ]] || { echo 'Unexpected application ID' >&2; exit 2; }
 [[ "$badging" != *"application-debuggable"* ]] || { echo 'Refusing a debuggable APK' >&2; exit 2; }
 mkdir -p "$(dirname "$OUTPUT")"
 work=$(mktemp -d)

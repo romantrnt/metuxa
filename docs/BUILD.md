@@ -4,7 +4,7 @@ Run commands from the repository root unless a step says otherwise. Release bina
 
 ## Native Linux
 
-Install a C++20 compiler, Meson, Ninja, pkg-config and development packages for OpenSSL, libcurl >= 7.85, FFmpeg (libavcodec, libavutil, libswscale, libswresample), PipeWire, sdbus-c++ 1.5, gtkmm >= 4.10 / GTK4, and json-glib.
+Install C and C++20 compilers, Meson, Ninja, pkg-config and development packages for OpenSSL, libcurl >= 7.85, FFmpeg (libavcodec, libavutil, libswscale, libswresample), PipeWire, sdbus-c++ 1.5, gtkmm >= 4.10 / GTK4, and json-glib.
 
 The portal backend uses the sdbus-c++ 1.x API. Version 2 needs source changes. The audio encoder supports both the FFmpeg 7 API and newer supported-format queries.
 
@@ -28,7 +28,7 @@ cd client/quest
 gradle --no-daemon :app:assembleDebug :app:lintDebug :app:testCore
 ```
 
-The debug APK is `client/quest/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`, relative to the repository root. It uses the `dev.metuxa.quest` package ID and a local debug signature. It cannot update a release-signed install. No build command installs or launches the APK.
+The debug APK is `client/quest/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`, relative to the repository root. It uses the `io.github.romantrnt.metuxa` package ID and a local debug signature. It cannot update a release-signed install. No build command installs or launches the APK.
 
 Use `:app:assembleRelease :app:lintRelease :app:testCore` for an unsigned release build. Signing and safe upgrades are covered in [Releasing](RELEASING.md).
 
@@ -62,11 +62,10 @@ meson compile -C build mutter-orientation-test
 bash tests/run-isolated-mutter.sh "$PWD/build/tests/mutter-orientation-test"
 ```
 
-This checks real virtual-monitor mode changes and session cleanup, without
-capturing the user's desktop. It does not validate the portal picker, a physical
-Quest, or Horizon window behavior.
+This checks virtual-monitor mode changes and session cleanup in the private
+compositor.
 
-Synthetic streaming tests use a separate network namespace, software encoding, test-pattern/test-tone sources, and no access to the user's display, session bus or PipeWire devices. They do not establish real portal, GPU or Quest behavior. Current results are in [0.4.1 verification](VERIFICATION-0.4.1.md); physical-device checks are in [Manual tests](MANUAL-TESTS.md).
+Synthetic streaming tests use a separate network namespace, software encoding and test-pattern/test-tone sources. They have no access to the user's display, session bus or PipeWire devices. For interactive checks, use the [manual checklist](MANUAL-TESTS.md).
 
 ## Release packaging
 

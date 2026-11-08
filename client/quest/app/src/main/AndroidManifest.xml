@@ -15,7 +15,7 @@
             <layout android:defaultWidth="1280dp" android:defaultHeight="720dp" android:minWidth="360dp" android:minHeight="225dp" />
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
-        <activity android:name=".StreamActivity" android:exported="false" android:launchMode="singleTask" android:taskAffinity="dev.metuxa.quest.stream"
+        <activity android:name=".StreamActivity" android:exported="false" android:launchMode="singleTask" android:taskAffinity="io.github.romantrnt.metuxa.stream"
             android:resizeableActivity="true" android:screenOrientation="landscape"
             android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode|density">
             <layout android:defaultWidth="1280dp" android:defaultHeight="720dp" android:minWidth="360dp" android:minHeight="225dp" />

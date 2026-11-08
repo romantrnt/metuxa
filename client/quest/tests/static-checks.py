@@ -14,7 +14,7 @@ activities = {e.get(a + "name"): e for e in app.findall("activity")}
 assert activities[".MainActivity"].get(a + "exported") == "true"
 for name in (".StreamActivity", ".MonitorActivity"):
     assert activities[name].get(a + "exported") == "false"
-assert "applicationId 'dev.metuxa.quest'" in (root / "app/build.gradle").read_text()
+assert "applicationId 'io.github.romantrnt.metuxa'" in (root / "app/build.gradle").read_text()
 main = (src / "MainActivity.java").read_text()
 assert "new StreamSession" not in main
 assert "!settings.autoHost().isEmpty()" in main
@@ -79,7 +79,7 @@ assert "requestOrientation(selected == 1)" in panel
 for name in (".MainActivity", ".StreamActivity", ".MonitorActivity"):
     layout = activities[name].find("layout")
     assert layout is not None and layout.get(a + "defaultWidth") == "1280dp" and layout.get(a + "defaultHeight") == "720dp"
-assert activities[".StreamActivity"].get(a + "taskAffinity") == "dev.metuxa.quest.stream"
+assert activities[".StreamActivity"].get(a + "taskAffinity") == "io.github.romantrnt.metuxa.stream"
 assert "MonitorGeometry.fit(" in panel
 assert "viewportParams.topMargin" not in panel and "viewportParams.bottomMargin" not in panel
 assert "setOnHoverListener((v, e) -> capturePointer(e))" in capture
@@ -94,14 +94,20 @@ for element in app.iter():
         assert element.get(a + "label") == "@string/app_name"
 names = [entry for path in (root / "app/src/main/res").glob("values*/*.xml")
          for entry in ET.parse(path).getroot() if entry.get("name") == "app_name"]
-assert len(names) == 1 and names[0].text == "metuxa" and names[0].get("translatable") == "false"
+assert len(names) == 1 and names[0].text == "metuxa 🐧" and names[0].get("translatable") == "false"
 gradle = (root / "app/build.gradle").read_text()
 assert "resValue 'string', 'app_name'" not in gradle
 assert 'resValue \'string\', \'app_version_label\', "metuxa v${versionName}"' in gradle
 for activity in (main, panel):
-    assert "setTitle(R.string.app_version_label)" in activity
-for ui in (main, (src / "SettingsDialog.java").read_text()):
-    assert "getString(R.string.app_version_label)" in ui and "R.string.app_name" not in ui
+    assert "setTitle(R.string.app_name)" in activity
+assert "QuestUi.brand(this)" in main
+assert "getString(R.string.app_version_label)" in (src / "SettingsDialog.java").read_text()
+assert "resValue 'string', 'app_version', versionName" in gradle
+assert '"io.github.romantrnt.metuxa".equals(archive.packageName)' in (src / "UpdateManager.java").read_text()
+assert '"Settings", false' not in main and '"Settings", false' not in (src / "QuestToolbar.java").read_text()
+for ui in (main, (src / "QuestToolbar.java").read_text()):
+    assert "QuestUi.overflowButton" in ui and '"About"' in ui
+assert "R.drawable.metuxa_tux" in (src / "AboutDialog.java").read_text()
 
 renderer = (src / "RemoteSurfaceView.java").read_text()
 assert "extends TextureView" in renderer and "return false;" in renderer

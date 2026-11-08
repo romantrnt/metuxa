@@ -16,7 +16,7 @@ The comparison contains 32 bits, displayed as ten decimal digits with leading ze
 
 An active forgery has approximately a one-in-2^32 chance per independent trial, assuming SHA-256 behaves as expected and users compare all digits. Ten decimal characters do not provide ten decimal digits of entropy. The PC's limits restrict request admission; repeated user-started attempts on either device still create additional trials. This comparison has a smaller authentication margin than checking the full fingerprint. It is not a substitute for full-fingerprint verification where that margin is required.
 
-This is an application-specific commitment-based comparison exchange, not an implementation or certification of Bluetooth pairing, a PAKE, or an independently audited protocol. Source review and automated tests do not establish an independent cryptographic security audit.
+PAIR1 is an application-specific commitment-based comparison exchange. It does not implement Bluetooth pairing or a PAKE.
 
 ## Wire exchange
 
@@ -72,6 +72,6 @@ Manual pairing still compares the entire SHA-256 fingerprint and enters the per-
 
 This does not defend against a compromised PC, headset, OS or another process with the same user's local access. Attackers can still cause denial of service, consume an open pairing window, interfere with traffic or block a connection. Use a trusted local network and do not expose the listeners through public port forwarding.
 
-## Verification
+## Tests
 
 Run `sh tests/security/run-pairing.sh` with JDK 17 available through `JAVA` and `JAVAC`. The suite is also included in `tests/security/run.sh`. It checks matching C++/Java hash vectors, differing certificate bindings, commitment mismatch, unsolicited requests, extra commands, missing reveals, stale identifiers, cancellation, explicit rejection, both confirmations, early remote success, one-shot token issuance, the attempt cap and real 60-second expiry. Java then reconnects to the native TLS server using the approved pin and token. These tests use synthetic TLS peers without capture or input devices.

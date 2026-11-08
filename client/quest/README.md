@@ -2,19 +2,21 @@
 
 A native, resizable Android 2D application for Quest/Horizon OS. The launcher
 opens first. Discovery suggests PCs; it never chooses or trusts one for you.
-The separate package `dev.metuxa.quest` can coexist with the original
-`com.metashare.client` installation. Source namespace remains
-`com.metashare.client` to preserve continuity with MetaShare.
+The Android package is `io.github.romantrnt.metuxa`. It can coexist with the
+older `dev.metuxa.quest` app and the original `com.metashare.client` installation.
+Source namespace remains `com.metashare.client` to preserve continuity with
+MetaShare. See [the package migration](../../docs/UPDATES.md#android-package-migration)
+before moving from an older metuxa installation.
 
 ## App name and version
 
-Version 0.4.1 uses the stable Android application/launcher label
-**metuxa**. The installed version stays in the launcher footer and **Settings**;
-the running Activities also request a versioned window title. Horizon controls
-its outer window decoration and library cache, so those shell surfaces are not
-an authoritative version check. Published 0.4.0 and earlier APKs used a versioned
-application label. See [library-name migration](../../docs/UPDATES.md#quest-library-name-and-installed-version)
-for safe upgrade expectations.
+The application, launcher and requested Activity title use **metuxa 🐧**, without
+a version number. The installed version appears beside the **metuxa** header in
+smaller gray text, and in **Settings** and **About**. Use the three-dot menu to
+open either. **About** includes the project artwork, GitHub link and credits.
+
+Horizon controls its outer window decoration and library cache. Check the
+in-app version or Android's package information if a library entry looks stale.
 
 ## Connect
 
@@ -30,7 +32,7 @@ for safe upgrade expectations.
 4. Discovery never establishes trust or connects by itself. Automatic connection
    is opt-in and tied to one explicitly saved PC. Restarting the server changes
    its pairing details, so the new identity must be paired again.
-5. Use **Settings** to return to the launcher, or **Disconnect all** to stop all
+5. Open the three-dot menu, then **Settings → Input, sound and saved PCs** to return to the launcher, or **Disconnect all** to stop all
    metuxa panels and release remote input. The toolbar remains reachable even
    when remote pointer input is blocked.
 
@@ -55,10 +57,9 @@ PC cursor position**, without a hidden coordinate update. Dragging requires
 movement. Movement-only never presses buttons; scroll-only never sends a
 pointer position or click.
 
-**Full remote**, **Keyboard only** and **View only** presets set the real
-switches. The displayed active preset is derived from the effective settings;
-other combinations show **Custom**, rather than retaining a misleading preset
-name. The default remains full client-side input, while server permission still
+**Full remote**, **Keyboard only** and **View only** presets set the input
+switches. The active preset reflects the current settings; other combinations
+show **Custom**. The default remains full client-side input, while server permission still
 controls whether any remote input is accepted.
 
 A separate pointer-device rule offers:
@@ -167,9 +168,9 @@ The manifest follows Meta's [initial window size guidance](https://developers.me
 and [resizable layout guidance](https://developers.meta.com/vr/documentation/android-apps/gaze-app-config/).
 Android documents the limits of [ActivityOptions.setLaunchBounds](https://developer.android.com/reference/android/app/ActivityOptions#setLaunchBounds(android.graphics.Rect)).
 
-The launcher keeps the graphite palette, with native switch rows and compact
+The launcher uses a graphite palette, with native switch rows and compact
 settings menus. **Pointer device rules** and **Input diagnostics** expand in
-place. **More** and **Disconnect** stay reachable on narrow stream panels; the toolbar
+place. The **three-dot menu** and **Disconnect** stay reachable on narrow stream panels; the toolbar
 collapses before cutting off an action label.
 
 ## Opt-in input diagnostics
@@ -203,7 +204,7 @@ runtime, but cannot establish a reliable hand/controller distinction on its own.
   state machines covered by executable Java tests.
 - `StreamSession` / `SecureTransport` / `RtpReceiver`: authenticated transport.
 
-## Build and verification
+## Build and tests
 
 Requires an existing JDK 17, Gradle 8.7, Android SDK platform/build-tools 34, and
 cached Android Gradle Plugin 8.5.0. No NDK or CMake is needed.
@@ -226,10 +227,7 @@ runtime:
 JAVA_HOME=/path/to/jdk17 bash tests/run-core-tests.sh
 ```
 
-See the [verification record](../../docs/VERIFICATION.md) for current results
-and the [acceptance checklist](../../docs/MANUAL-TESTS.md) for physical-device
-checks. [Android View tests](tests/ui/README.md) cover layout and interaction
-without a headset.
-No build command above installs the APK, launches an app, captures a desktop,
-or injects input into the user's session. Installation and end-to-end testing
-must be performed separately by the user.
+[Android View tests](tests/ui/README.md) cover layout and interaction. For
+physical-device checks, follow the [acceptance checklist](../../docs/MANUAL-TESTS.md).
+The build and test commands above do not install or launch the APK, capture a
+desktop or inject input into the user's session.

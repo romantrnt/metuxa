@@ -1,6 +1,6 @@
 # Live acceptance checklist
 
-Use a test desktop and headset you are ready to interrupt. Keep the previous release available for rollback. Record PASS, FAIL or NOT TESTED with the OS/headset versions. [Automated results](VERIFICATION-0.4.0.md) cover isolated sessions and synthetic media; they do not replace these checks.
+Use a test desktop and headset you are ready to interrupt. Keep the previous release available for rollback. Record the device and OS versions with each result.
 
 ## Launch and pair
 
@@ -17,7 +17,7 @@ Use a test desktop and headset you are ready to interrupt. Keep the previous rel
 - Try audio Off/System with one, two and three panels. Audio must play once, through the primary panel only. No microphone capture.
 - Secondary panels must use the selected PC, never another discovery offer. Close/reopen them twenty times. Closing the primary disconnects the others.
 - Try view-only single-window capture. The portal must offer an actual application window, not silently share a whole monitor; availability depends on the portal.
-- Run for 30 to 60 minutes, including alongside Noda if used. Record stability and comfort. Measure latency separately rather than inferring it from frame rate.
+- Run for 30 to 60 minutes. Record stability and comfort. Measure latency separately rather than inferring it from frame rate.
 
 ## Input
 
@@ -36,12 +36,12 @@ Use a test desktop and headset you are ready to interrupt. Keep the previous rel
 
 ## Panels and appearance
 
-- With a landscape physical screen, launch the Quest app and connect. Check the initial outer Horizon window, then repeat on a first-ever connection to a portrait or non-16:9 source, and after manually resizing the panel. Wrong credentials or a timed-out size check must not establish trust or start a stream silently. Record Horizon OS version and whether it honors initial bounds/orientation hints; Android View renders do not establish this behavior.
+- With a landscape physical screen, launch the Quest app and connect. Check the initial outer Horizon window, then repeat on a first-ever connection to a portrait or non-16:9 source, and after manually resizing the panel. Wrong credentials or a timed-out size check must not establish trust or start a stream silently. Record Horizon OS version and whether it honors initial bounds/orientation hints.
 - The physical monitor must match the PC exactly. Its Orientation action must explain that an independent portrait workspace needs a virtual screen and must never rotate decoded pixels or change the PC display configuration. Saved image-rotation settings from 0.3.0 must not rotate this view after an upgrade.
 - Create a supported GNOME virtual screen. Switch only that screen between Portrait and Landscape. Check the resolution in GNOME Display settings, upright text, application-window reflow, all four pointer corners, drag, hover, scroll and keyboard focus. The physical screen and other virtual screens must retain their modes.
 - Reconnect after each virtual-mode change and confirm the same desktop/session survives. Repeat rapid requests, unsupported sources, resize failure, disconnect during a request and switching back to the original orientation. Failure must be visible; no global display configuration may be changed.
 - Check the desktop app with System theme while GNOME is dark, switch GNOME to light and back, and repeat after explicit Light/Dark overrides. Run both the native build and the AppImage. The theme must update without restarting the app or sharing.
-- Test the top and bottom bars independently in Always, Hover and Hide after a delay modes. Use mouse hover, controller rays and hands. **Controls** and **More** must keep every action reachable. Touching a local control must not click the remote desktop.
+- Test the top and bottom bars independently in Always, Hover and Hide after a delay modes. Use mouse hover, controller rays and hands. **Controls** and the **three-dot menu** must keep every action reachable. Touching a local control must not click the remote desktop.
 - With two panels resumed, change bar mode, opacity and keep-awake from either panel and the launcher. Both panels must update.
 - Change theme/text size, resize, minimize, switch focus, return Home, close and reopen. Repeat disconnect/reconnect during recreation. Check for frozen video, duplicate audio, overlapping decoder ownership or unreleased input.
 
@@ -54,8 +54,10 @@ Use a test desktop and headset you are ready to interrupt. Keep the previous rel
 
 ## Installation and updates
 
-- Install signed 0.4.0/code 5 over 0.3.0/code 4 without uninstalling or clearing data. Saved preferences and pairing data must survive, while legacy image-rotation settings must no longer rotate physical screens. Android app info must show `metuxa v0.4.0`. Record separately what Horizon's Unknown Sources library displays.
-- For the stable-label fix, install signed 0.4.1/code 6 in place over signed 0.4.0/code 5 with the same signer. Android package metadata and resolved launcher label must be `metuxa`; the launcher footer and Settings must show the new installed version. Record the outer window title and Unknown Sources label separately, before and after reopening the library. If the label stays old, a normal headset restart may be checked only when the user has ended their session; record the result without promising that it invalidates the cache. Never clear data, uninstall, reset Home or change the package/component identity for this check.
-- Updates start disabled. Enable checks and optional automatic downloads. A downloaded release must never install by itself, and an installer prompt must not interrupt active streaming.
-- Use the 0.3.0 in-app updater to exercise the signed 0.4.0 update: check, download cancellation/retry, permission denial, Android confirmation cancellation, installation, insufficient storage and process death. Settings must survive. Changed signers, modified assets and older releases must be rejected.
+- For 0.4.2/code 7, manually install the official `io.github.romantrnt.metuxa` APK alongside `dev.metuxa.quest`. Confirm the existing release signer is unchanged, both apps remain installed and the old app's data stays intact. The new app must start with fresh settings, saved PCs and installer permission; pair explicitly there. Do not uninstall, copy encrypted tokens or clear the old app's data as part of this test.
+- Verify the older app rejects the new package before installation through its updater. In the new app, test future same-package updates with the release signer, preserving settings. A different package or signer must remain rejected.
+- Android package metadata and resolved launcher label must read **metuxa 🐧**, without a version. The launcher header, Settings and About must show 0.4.2. Check the three-dot menu on the launcher and monitor panels, Settings/About, Close/Back, narrow panels and large text. Record the Horizon library and outer title separately because the shell may cache them.
+
+- Select manual update checks, then enable scheduled checks and optional automatic downloads. A downloaded release must never install by itself, and an installer prompt must not interrupt active streaming.
+- Use the in-app updater for a same-package signed update: check, download cancellation/retry, permission denial, Android confirmation cancellation, installation, insufficient storage and process death. Settings must survive. Changed signers, modified assets and older releases must be rejected.
 - Keep the previous AppImage and test from a private user-writable directory. Check automatic download, explicit installation, restart and manual rollback. Read-only files, symlinks and hard links must receive a useful error. See [Updates](UPDATES.md).

@@ -63,6 +63,23 @@ final class QuestUi {
         b.setBackgroundTintList(null); b.setBackground(buttonBackground(context, primary)); b.setStateListAnimator(null);
         b.setContentDescription(label); return b;
     }
+    static TextView brand(Context context) {
+        String version = context.getString(R.string.app_version);
+        android.text.SpannableString label = new android.text.SpannableString("metuxa  " + version);
+        label.setSpan(new android.text.style.RelativeSizeSpan(.5f), 8, label.length(), 0);
+        label.setSpan(new android.text.style.ForegroundColorSpan(color(context, R.color.quest_muted)), 8, label.length(), 0);
+        label.setSpan(new android.text.style.TypefaceSpan("sans-serif"), 8, label.length(), 0);
+        TextView brand = text(context, "", 28, color(context, R.color.quest_text));
+        brand.setText(label); brand.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        brand.setLetterSpacing(-.025f); brand.setAccessibilityHeading(true);
+        brand.setContentDescription("metuxa, version " + version); return brand;
+    }
+    static Button overflowButton(Context context, String description) {
+        Button button = button(context, "", false); button.setTextSize(0); button.setIncludeFontPadding(false);
+        button.setPadding(dp(context, 12), dp(context, 12), dp(context, 12), dp(context, 12));
+        button.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.quest_more, 0, 0, 0);
+        button.setContentDescription(description); return button;
+    }
     static void styleToggle(CompoundButton button) {
         Context context = button.getContext();
         button.setButtonTintList(context.getColorStateList(R.color.quest_control_tint));

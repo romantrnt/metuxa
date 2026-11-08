@@ -194,7 +194,7 @@ public final class UpdateManager implements AutoCloseable {
     }
     private void verifyArchive(File apk,UpdateManifest manifest) throws Exception {
         PackageInfo archive=context.getPackageManager().getPackageArchiveInfo(apk.getAbsolutePath(),PackageManager.GET_SIGNING_CERTIFICATES);
-        if(archive==null || !"dev.metuxa.quest".equals(archive.packageName) || archive.getLongVersionCode()!=manifest.versionCode || !manifest.version.equals(archive.versionName)) throw new SecurityException("APK identity/version does not match signed release");
+        if(archive==null || !"io.github.romantrnt.metuxa".equals(archive.packageName) || archive.getLongVersionCode()!=manifest.versionCode || !manifest.version.equals(archive.versionName)) throw new SecurityException("APK identity/version does not match signed release");
         verifySigner(archive);
     }
     private static void verifySigner(PackageInfo info) throws Exception {

@@ -46,36 +46,70 @@ public class ThemeRenderTest {
         android.app.Application app = RuntimeEnvironment.getApplication();
         android.content.pm.PackageManager pm = app.getPackageManager();
         String packageName = app.getPackageName();
-        assertEquals("dev.metuxa.quest", packageName);
-        assertEquals("metuxa", pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString());
+        assertEquals("io.github.romantrnt.metuxa", packageName);
+        assertEquals("metuxa 🐧", pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString());
         for (Class<?> type : new Class<?>[] {MainActivity.class, StreamActivity.class, MonitorActivity.class}) {
             android.content.pm.ActivityInfo info = pm.getActivityInfo(new android.content.ComponentName(app, type), 0);
-            assertEquals("Manifest activity label stays version-free", "metuxa", info.loadLabel(pm).toString());
+            assertEquals("Manifest activity label stays version-free", "metuxa 🐧", info.loadLabel(pm).toString());
         }
         Intent launch = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(packageName);
         android.content.pm.ResolveInfo resolved = pm.resolveActivity(launch, 0);
         assertNotNull(resolved); assertEquals(MainActivity.class.getName(), resolved.activityInfo.name);
-        assertEquals("Launcher intent label stays version-free", "metuxa", resolved.loadLabel(pm).toString());
+        assertEquals("Launcher intent label stays version-free", "metuxa 🐧", resolved.loadLabel(pm).toString());
         String version = "metuxa v" + pm.getPackageInfo(packageName, 0).versionName;
         assertEquals("Runtime text follows the packaged version", version, app.getString(R.string.app_version_label));
         AppSettings preferences = new AppSettings(app); preferences.preferences.edit().clear().commit(); preferences.flag("discover_on_open", false);
         ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class, new Intent(app, MainActivity.class).putExtra("manage", true)).create().start().resume().visible();
-        MainActivity activity = controller.get(); assertEquals(version, activity.getTitle().toString());
+        MainActivity activity = controller.get(); assertEquals("metuxa 🐧", activity.getTitle().toString());
         View root = ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0); layout(root, 480, 900);
-        assertNotNull("Launcher footer retains the installed version", find(root, version, TextView.class));
-        find(root, "Settings", Button.class).performClick(); AlertDialog settings = ShadowAlertDialog.getLatestAlertDialog();
+        assertHeaderVersion(root, app.getString(R.string.app_version));
+        openMenu(root, "Settings"); AlertDialog settings = ShadowAlertDialog.getLatestAlertDialog();
         assertNotNull("Settings retains the installed version", find(settings.getWindow().getDecorView(), version, TextView.class));
         settings.getButton(AlertDialog.BUTTON_POSITIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle();
         controller.recreate(); activity = controller.get();
-        assertEquals("Runtime title survives recreation", version, activity.getTitle().toString());
+        assertEquals("Runtime title survives recreation", "metuxa 🐧", activity.getTitle().toString());
         root = ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0);
-        assertNotNull("Footer version survives recreation", find(root, version, TextView.class));
-        find(root, "Settings", Button.class).performClick(); settings = ShadowAlertDialog.getLatestAlertDialog();
+        assertHeaderVersion(root, app.getString(R.string.app_version));
+        openMenu(root, "Settings"); settings = ShadowAlertDialog.getLatestAlertDialog();
         assertNotNull("Settings version survives recreation", find(settings.getWindow().getDecorView(), version, TextView.class));
         settings.getButton(AlertDialog.BUTTON_POSITIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle();
-        assertEquals("Runtime titles do not change package metadata", "metuxa", pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString());
-        assertEquals("Runtime titles do not change launcher metadata", "metuxa", pm.resolveActivity(launch, 0).loadLabel(pm).toString());
-        controller.pause().stop().destroy();
+        assertEquals("Runtime titles do not change package metadata", "metuxa 🐧", pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString());
+        assertEquals("Runtime titles do not change launcher metadata", "metuxa 🐧", pm.resolveActivity(launch, 0).loadLabel(pm).toString());
+        openMenu(root, "About"); AlertDialog about = ShadowAlertDialog.getLatestAlertDialog();
+        controller.pause().stop().destroy(); Shadows.shadowOf(Looper.getMainLooper()).idle(); assertFalse("Destroyed launcher closes About", about.isShowing());
+    }
+
+    @Test public void updateArchiveRejectsOtherPackagesAndUnsignedApks() throws Exception {
+        android.content.Context context = RuntimeEnvironment.getApplication();
+        String version = context.getString(R.string.app_version);
+        int code = (int) context.getPackageManager().getPackageInfo(context.getPackageName(), 0).getLongVersionCode();
+        String[] payload = {"metuxa-update-v1", "version=" + version, "version_code=" + code, "protocol_min=5", "protocol_max=5",
+            "android_size=123", "android_sha256=" + "a".repeat(64), "linux_size=456", "linux_sha256=" + "b".repeat(64)};
+        // This test isolates the archive gate; manifest signature tests use the real verifier separately.
+        UpdateManifest manifest = ReflectionHelpers.callConstructor(UpdateManifest.class, ReflectionHelpers.ClassParameter.from(String[].class, payload));
+        android.content.pm.PackageInfo archive = new android.content.pm.PackageInfo();
+        archive.versionName = version; archive.setLongVersionCode(code);
+        File path = new File(context.getCacheDir(), "identity-test.apk");
+        java.lang.reflect.Method verify = UpdateManager.class.getDeclaredMethod("verifyArchive", File.class, UpdateManifest.class); verify.setAccessible(true);
+        try (UpdateManager updater = new UpdateManager(context)) {
+            for (String id : new String[] {"dev.metuxa.quest", "com.metashare.client", "io.github.romantrnt.other"}) {
+                archive.packageName = id; Shadows.shadowOf(context.getPackageManager()).setPackageArchiveInfo(path.getAbsolutePath(), archive);
+                assertArchiveRejected(verify, updater, path, manifest, "APK identity/version does not match signed release");
+            }
+            archive.packageName = context.getPackageName(); archive.setLongVersionCode(code - 1);
+            Shadows.shadowOf(context.getPackageManager()).setPackageArchiveInfo(path.getAbsolutePath(), archive);
+            assertArchiveRejected(verify, updater, path, manifest, "APK identity/version does not match signed release");
+            archive.setLongVersionCode(code); archive.versionName = "0.0.1";
+            assertArchiveRejected(verify, updater, path, manifest, "APK identity/version does not match signed release");
+            archive.versionName = version;
+            assertArchiveRejected(verify, updater, path, manifest, "Unexpected APK signer");
+        }
+    }
+    private static void assertArchiveRejected(java.lang.reflect.Method verify, UpdateManager updater, File path, UpdateManifest manifest, String expected) throws Exception {
+        try { verify.invoke(updater, path, manifest); fail("Untrusted APK was accepted"); }
+        catch (java.lang.reflect.InvocationTargetException error) {
+            assertTrue(error.getCause() instanceof SecurityException); assertEquals(expected, error.getCause().getMessage());
+        }
     }
 
     @Test public void toolbarLayoutsAndActions() throws Exception {
@@ -86,7 +120,7 @@ public class ThemeRenderTest {
             Activity activity = controller.get(); activity.setTheme(R.style.MetuxaTheme); controller.create();
             new AppSettings(activity).preferences.edit().clear().commit();
             FrameLayout root = new FrameLayout(activity); root.setBackgroundColor(QuestUi.BACKGROUND); activity.setContentView(root);
-            int[] calls = new int[6];
+            int[] calls = new int[7];
             QuestToolbar toolbar = new QuestToolbar(activity, root, true, new QuestToolbar.Callbacks() {
                 public void onScreenCountRequested(int count) { calls[0] = count; }
                 public void onKeyboardRequested() { calls[1]++; }
@@ -94,6 +128,7 @@ public class ThemeRenderTest {
                 public void onSettingsRequested() { calls[3]++; }
                 public void onDisconnectRequested() { calls[4]++; }
                 public void onOrientationRequested() { calls[5]++; }
+                public void onAboutRequested() { calls[6]++; }
             });
             controller.start().resume().visible(); toolbar.setScreenCount(2, 3);
             layout(root, width, QuestToolbar.height(activity) + 16);
@@ -110,11 +145,13 @@ public class ThemeRenderTest {
             assertFalse(find(root, "Keyboard off", Button.class).isEnabled());
             find(root, "Pointer settings", Button.class).performClick(); assertEquals(1, calls[3]);
             disconnect.performClick(); assertEquals(1, calls[4]);
-            Button more = find(root,"More",Button.class); assertNotNull(more); more.performClick();
+            Button more = findDescription(root, "More options", Button.class); assertNotNull(more); more.performClick();
             android.widget.PopupMenu menu = org.robolectric.shadows.ShadowPopupMenu.getLatestPopupMenu(); assertNotNull(menu);
             org.robolectric.shadows.ShadowPopupMenu menuShadow = Shadows.shadowOf(menu);
             menuShadow.getOnMenuItemClickListener().onMenuItemClick(menu.getMenu().findItem(1)); assertEquals(2,calls[3]);
-            menuShadow.getOnMenuItemClickListener().onMenuItemClick(menu.getMenu().findItem(2)); assertEquals(1,calls[5]); menu.dismiss();
+            menuShadow.getOnMenuItemClickListener().onMenuItemClick(menu.getMenu().findItem(2)); assertEquals(1,calls[5]);
+            menuShadow.getOnMenuItemClickListener().onMenuItemClick(menu.getMenu().findItem(8)); assertEquals(1,calls[6]);
+            assertNull("Settings is available through overflow only", find(root,"Settings",Button.class)); menu.dismiss();
             layout(root, width, QuestToolbar.height(activity) + 16); save(root, "toolbar-view-only-" + width);
             controller.pause().stop().destroy();
         }
@@ -129,7 +166,7 @@ public class ThemeRenderTest {
             View main = ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0); layout(main,480,900);
             int expected = theme == 0 ? 0xff181818 : 0xfff3f3f3;
             assertEquals("Theme resources", expected, QuestUi.color(activity,R.color.quest_background));
-            find(main,"Settings",Button.class).performClick(); AlertDialog settings = ShadowAlertDialog.getLatestAlertDialog();
+            openMenu(main, "Settings"); AlertDialog settings = ShadowAlertDialog.getLatestAlertDialog();
             layout(settings.getWindow().getDecorView(),448,840); save(settings.getWindow().getDecorView(),"settings-theme-"+theme);
             CompoundButton awake = find(settings.getWindow().getDecorView(),"Keep the display awake while connected",CompoundButton.class); awake.performClick();
             assertFalse(new AppSettings(activity).keepAwake());
@@ -137,6 +174,10 @@ public class ThemeRenderTest {
             CompoundButton downloads = find(settings.getWindow().getDecorView(),"Download verified updates automatically",CompoundButton.class); assertTrue(downloads.isEnabled());
             updates.performClick(); assertFalse(downloads.isEnabled());
             settings.getButton(AlertDialog.BUTTON_POSITIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle(); assertFalse(settings.isShowing());
+            openMenu(main, "About"); AlertDialog about = ShadowAlertDialog.getLatestAlertDialog();
+            layout(about.getWindow().getDecorView(), 448, 740); save(about.getWindow().getDecorView(), "about-theme-" + theme);
+            assertHeaderVersion(about.getWindow().getDecorView(), activity.getString(R.string.app_version));
+            about.getButton(AlertDialog.BUTTON_POSITIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle(); assertFalse(about.isShowing());
             AppSettings persisted = new AppSettings(activity); persisted.rotation("192.0.2.1:7878",0,270); persisted.rotation("192.0.2.1:7878",1,90);
             assertEquals(270,new AppSettings(activity).rotation("192.0.2.1:7878",0)); assertEquals(90,persisted.rotation("192.0.2.1:7878",1)); assertEquals(0,persisted.rotation("192.0.2.2:7878",0));
             controller.pause().stop().destroy();
@@ -148,7 +189,7 @@ public class ThemeRenderTest {
         ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class, new Intent(RuntimeEnvironment.getApplication(), MainActivity.class).putExtra("manage", true)).create().start().resume().visible();
         MainActivity activity = controller.get();
         View root = ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0); layout(root, 360, 800);
-        find(root, "Settings", Button.class).performClick(); AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+        openMenu(root, "Settings"); AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
         View decor = dialog.getWindow().getDecorView(); layout(decor, 328, 740); save(decor, "settings-large-font-top");
         Button updates = find(decor, "Check for updates", Button.class); assertNotNull(updates);
         View parent = updates; while (!(parent instanceof ScrollView)) parent = (View) parent.getParent();
@@ -248,7 +289,7 @@ public class ThemeRenderTest {
         assertEquals(16f, background.getCornerRadius(), .01f); prefs.integer("panel_opacity", 70); root.configure();
         assertSame(background, bottom.getBackground()); assertEquals(70 * 255 / 100, android.graphics.Color.alpha(background.getColor().getDefaultColor()));
         assertEquals(400,video.getHeight());assertEquals(View.VISIBLE,bottom.getVisibility());
-        Button settingsButton = find(root,"Settings",Button.class); settingsButton.setFocusableInTouchMode(true); int beforeFocus=localInput[0]; settingsButton.requestFocus();
+        Button settingsButton = findDescription(root,"More options",Button.class); settingsButton.setFocusableInTouchMode(true); int beforeFocus=localInput[0]; settingsButton.requestFocus();
         assertTrue("Native control focus releases remote input",localInput[0]>beforeFocus);settingsButton.clearFocus();root.setFocusableInTouchMode(true);root.requestFocus();
         Shadows.shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3));assertEquals(View.INVISIBLE,bottom.getVisibility());
         Button handle=find(root,"Controls",Button.class);assertNotNull(handle);assertTrue(handle.getHeight()>=48);handle.performClick();assertEquals(View.VISIBLE,bottom.getVisibility());
@@ -269,7 +310,7 @@ public class ThemeRenderTest {
         // Do not attach the TextureView or invoke surface availability: no media, sockets or discovery.
         ActivityController<StreamActivity> controller = Robolectric.buildActivity(StreamActivity.class, intent).create();
         StreamActivity activity = controller.get(); RemoteSurfaceView surface = ReflectionHelpers.getField(activity, "surface");
-        assertEquals(activity.getString(R.string.app_version_label), activity.getTitle().toString());
+        assertEquals("metuxa 🐧", activity.getTitle().toString());
         assertEquals("Legacy image rotation must not tilt physical desktops", 0f, surface.getRotation(), 0f);
         ReflectionHelpers.callInstanceMethod(activity, "updateStreamSize", ReflectionHelpers.ClassParameter.from(int.class, 1080), ReflectionHelpers.ClassParameter.from(int.class, 1920));
         assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, activity.getRequestedOrientation());
@@ -289,7 +330,10 @@ public class ThemeRenderTest {
         ReflectionHelpers.callInstanceMethod(activity, "displayResult", ReflectionHelpers.ClassParameter.from(String.class, "restart_required"), ReflectionHelpers.ClassParameter.from(int.class, 0), ReflectionHelpers.ClassParameter.from(int.class, 0));
         ReflectionHelpers.callInstanceMethod(activity, "showStatus", ReflectionHelpers.ClassParameter.from(String.class, "View-only: remote input is disabled on the server"));
         TextView status = ReflectionHelpers.getField(activity, "status"); assertTrue(status.getText().toString().contains("could not be restored"));
-        assertFalse(ReflectionHelpers.getField(activity, "orientationSupported")); controller.destroy(); coordinator.disconnect();
+        assertFalse(ReflectionHelpers.getField(activity, "orientationSupported"));
+        ReflectionHelpers.callInstanceMethod(activity, "showAbout"); AlertDialog about = ShadowAlertDialog.getLatestAlertDialog();
+        ReflectionHelpers.callInstanceMethod(activity, "showAbout"); assertSame(about, ShadowAlertDialog.getLatestAlertDialog());
+        controller.destroy(); Shadows.shadowOf(Looper.getMainLooper()).idle(); assertFalse("Destroyed monitor closes About", about.isShowing()); coordinator.disconnect();
     }
     @Test public void returningToActiveScreensDoesNotProbe() {
         RuntimeEnvironment.setQualifiers("w1200dp-h1000dp-mdpi"); RuntimeEnvironment.setFontScale(1f);
@@ -339,6 +383,34 @@ public class ThemeRenderTest {
         controller.pause().stop().destroy();
     }
 
+    private static void assertHeaderVersion(View root, String version) {
+        TextView brand = find(root, "metuxa  " + version, TextView.class); assertNotNull("Installed version appears beside the brand", brand);
+        android.text.Spanned text = (android.text.Spanned) brand.getText();
+        android.text.style.RelativeSizeSpan[] sizes = text.getSpans(8, text.length(), android.text.style.RelativeSizeSpan.class);
+        assertEquals(1, sizes.length); assertEquals(.5f, sizes[0].getSizeChange(), 0f);
+        android.text.style.ForegroundColorSpan[] colors = text.getSpans(8, text.length(), android.text.style.ForegroundColorSpan.class);
+        assertEquals(1, colors.length); assertEquals(QuestUi.color(brand.getContext(), R.color.quest_muted), colors[0].getForegroundColor());
+        if (brand.getLayout() != null) assertEquals("Brand and version fit together", 1, brand.getLayout().getLineCount());
+    }
+    private static void openMenu(View root, String label) {
+        Button more = findDescription(root, "More options", Button.class); assertNotNull(more); more.performClick();
+        android.widget.PopupMenu menu = org.robolectric.shadows.ShadowPopupMenu.getLatestPopupMenu(); assertNotNull(menu);
+        for (int i = 0; i < menu.getMenu().size(); i++) {
+            android.view.MenuItem item = menu.getMenu().getItem(i);
+            if (label.contentEquals(item.getTitle())) {
+                menu.dismiss(); Shadows.shadowOf(menu).getOnMenuItemClickListener().onMenuItemClick(item); return;
+            }
+        }
+        fail("Missing overflow item: " + label);
+    }
+    private static <T extends View> T findDescription(View view, String description, Class<T> type) {
+        if (type.isInstance(view) && description.contentEquals(view.getContentDescription() == null ? "" : view.getContentDescription())) return type.cast(view);
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+            T found = findDescription(((ViewGroup) view).getChildAt(i), description, type); if (found != null) return found;
+        }
+        return null;
+    }
+
     private static android.view.MotionEvent pointerHover(float x,float y) {
         android.view.MotionEvent.PointerProperties properties = new android.view.MotionEvent.PointerProperties(); properties.id=0;properties.toolType=android.view.MotionEvent.TOOL_TYPE_STYLUS;
         android.view.MotionEvent.PointerCoords coordinates = new android.view.MotionEvent.PointerCoords();coordinates.x=x;coordinates.y=y;
@@ -365,6 +437,32 @@ public class ThemeRenderTest {
         save(scroll, name + "-viewport");
         save(scroll.getChildAt(0), name + "-full-page");
         inspectControls(scroll, width);
+        assertHeaderVersion(scroll, activity.getString(R.string.app_version));
+        Button more = findDescription(scroll, "More options", Button.class); assertNotNull(more);
+        Rect menuBounds = new Rect(0, 0, more.getWidth(), more.getHeight()); scroll.offsetDescendantRectToMyCoords(more, menuBounds);
+        assertTrue("Overflow target stays within the viewport", menuBounds.left >= 0 && menuBounds.right <= width && more.getHeight() >= 48);
+        openMenu(scroll, "About"); AlertDialog about = ShadowAlertDialog.getLatestAlertDialog(); assertTrue(about.isShowing());
+        ReflectionHelpers.callInstanceMethod(activity, "showAbout"); assertSame("Repeated About reuses the open dialog", about, ShadowAlertDialog.getLatestAlertDialog());
+        View aboutView = about.getWindow().getDecorView(); layout(aboutView, Math.min(width - 32, 600), Math.min(height - 60, 740));
+        assertNotNull(findDescription(aboutView, "Tux holding the Meta infinity symbol", android.widget.ImageView.class));
+        assertHeaderVersion(aboutView, activity.getString(R.string.app_version)); inspectControls(aboutView, width);
+        save(aboutView, name + "-about");
+        Button credits = find(aboutView, "Licenses and credits", Button.class); assertNotNull(credits);
+        View parent = credits; while (!(parent instanceof ScrollView)) parent = (View) parent.getParent();
+        ScrollView aboutScroll = (ScrollView) parent; aboutScroll.scrollTo(0, aboutScroll.getChildAt(0).getHeight());
+        assertTrue("About links remain reachable", credits.getBottom() <= aboutScroll.getScrollY() + aboutScroll.getHeight());
+        save(aboutView, name + "-about-bottom");
+        find(aboutView, "GitHub", Button.class).performClick();
+        assertEquals(UpdateManifest.REPOSITORY, Shadows.shadowOf(activity).getNextStartedActivity().getData().toString());
+        credits.performClick(); assertEquals(UpdateManifest.REPOSITORY + "/blob/main/THIRD-PARTY-NOTICES.md", Shadows.shadowOf(activity).getNextStartedActivity().getData().toString());
+        about.getButton(AlertDialog.BUTTON_POSITIVE).performClick(); Shadows.shadowOf(Looper.getMainLooper()).idle();
+        assertFalse(about.isShowing()); assertNull(ReflectionHelpers.getField(activity, "aboutDialog"));
+        more.performClick(); android.widget.PopupMenu dismissed = org.robolectric.shadows.ShadowPopupMenu.getLatestPopupMenu();
+        more.performClick(); assertSame("Repeated overflow reuses the open menu", dismissed, org.robolectric.shadows.ShadowPopupMenu.getLatestPopupMenu());
+        dismissed.dismiss(); assertNull(ReflectionHelpers.getField(activity, "overflowMenu"));
+        openMenu(scroll, "About"); about = ShadowAlertDialog.getLatestAlertDialog(); about.cancel(); Shadows.shadowOf(Looper.getMainLooper()).idle();
+        assertNull("Back/cancel releases About state", ReflectionHelpers.getField(activity, "aboutDialog"));
+        assertNull(ConnectionCoordinator.INSTANCE.current()); assertNull(ReflectionHelpers.getField(activity, "discovery"));
         scroll.scrollTo(0, scroll.getChildAt(0).getHeight());
         assertTrue("Last launcher section is reachable", find(scroll, "Input diagnostics", Button.class).getLocalVisibleRect(new Rect()));
         save(scroll, name + "-bottom"); scroll.scrollTo(0, 0);

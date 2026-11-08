@@ -14,8 +14,8 @@ The GTK control application, AppImage launcher/runtime and independent libraries
 
 The release contains both source archives below, beside the AppImage, without a source-request fee:
 
-- `metuxa-0.4.1-source.tar.gz`: the exact published metuxa source revision, including the build and packaging scripts.
-- `metuxa-0.4.1-dependency-sources.tar.gz`: the actual bundled dependency source archives, exact Ubuntu source-package versions and Debian/Ubuntu patches, the pinned Alpine package recipes/patches for static runtime libraries, and build records. Keep both archives available with any binary redistribution.
+- `metuxa-0.4.2-source.tar.gz`: the exact published metuxa source revision, including the build and packaging scripts.
+- `metuxa-0.4.2-dependency-sources.tar.gz`: the actual bundled dependency source archives, exact Ubuntu source-package versions and Debian/Ubuntu patches, the pinned Alpine package recipes/patches for static runtime libraries, and build records. Keep both archives available with any binary redistribution.
 
 This is direct corresponding-source distribution, not a substitute promise to supply source later. A repository link alone is not the dependency source bundle. A release must not publish the AppImage without both source assets and their checksums. GPL terms permit modification and redistribution; applicable LGPL terms also permit modification/relinking and reverse engineering for debugging such modifications.
 
@@ -33,7 +33,7 @@ The AppImage contains:
 
 Machine-readable inventories inside `usr/share/metuxa/` identify exact binary/source packages, file hashes, pinned source commits, build toolchain versions and the dependency source archive index. They describe the actual package rather than the much broader host FFmpeg installation. The source bundle includes the full code and build scripts needed to rebuild the LGPL-linked runtime, not only its top-level source.
 
-The target operating system supplies glibc, the dynamic loader, kernel, session services, fonts and GPU vendor drivers. These are not bundled. See [AppImage build and compatibility notes](docs/APPIMAGE.md) for the tested boundary.
+The target operating system supplies glibc, the dynamic loader, kernel, session services, fonts and GPU vendor drivers. These are not bundled. See [AppImage build and compatibility notes](docs/APPIMAGE.md) for the host requirements.
 
 ## Android
 

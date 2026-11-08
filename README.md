@@ -40,7 +40,7 @@ It is an independent continuation of [MetaShare](https://github.com/makemake-kbo
   <img src="docs/assets/control-panel.png" alt="metuxa GTK control panel, stopped, showing capture, sound, input and quality settings" width="650">
 </p>
 
-The stopped state from an isolated UI test. No desktop content is being captured.
+Linux control panel with sharing stopped.
 
 </details>
 
@@ -51,13 +51,13 @@ The stopped state from an isolated UI test. No desktop content is being captured
   <img src="docs/assets/quest-launcher.png" alt="metuxa Android launcher with neutral dark-gray pairing and remote-input controls" width="900">
 </p>
 
-Actual Android View rendering in an isolated test, not a headset capture. No address or pairing secret has been entered.
+Quest launcher rendered with native Android Views.
 
 </details>
 
 ## Start here
 
-See [Releases](https://github.com/romantrnt/metuxa/releases) for available downloads, checksums and version-specific installation notes. Use matching Linux and Quest versions. AppImage portability, APK signing and tested platforms are release-specific; a source checkout alone is not a verified binary package.
+See [Releases](https://github.com/romantrnt/metuxa/releases) for available downloads, checksums and version-specific installation notes. Use matching Linux and Quest versions.
 
 You need:
 
@@ -75,17 +75,17 @@ You need:
 
 Keep the pairing code private. Anyone with that run's pairing details may connect while the server is running. Do not expose metuxa to the public internet or configure router port forwarding.
 
-Default network ports: discovery **UDP 7877**, TLS control **TCP 7878–7880** for panels 1–3, and negotiated UDP ports for encrypted media. Protocol 5 is intentionally incompatible with legacy MetaShare clients.
+Default network ports: discovery **UDP 7877**, TLS control **TCP 7878-7880** for panels 1-3, and negotiated UDP ports for encrypted media. Protocol 5 is intentionally incompatible with legacy MetaShare clients.
 
 ## Settings and updates
 
-Open **Settings** on the PC or Quest. Quest has separate top/bottom panel modes: always visible, visible on hover, or hidden after a delay. Tap **Controls** to keep the bars open when using hands or a controller. A physical monitor stays as it is on the PC. Supported virtual monitors can switch between portrait and landscape, changing the desktop resolution so applications reflow with upright content. This affects only the selected virtual monitor. See [Monitor orientation](docs/ORIENTATION.md) for support and limits.
+Open the three-dot menu on the PC or Quest for **Settings** and **About metuxa**. The version appears beside the app name. Quest has separate top/bottom panel modes: always visible, visible on hover, or hidden after a delay. Tap **Controls** to keep the bars open when using hands or a controller. A physical monitor stays as it is on the PC. Supported virtual monitors can switch between portrait and landscape, changing the desktop resolution so applications reflow with upright content. This affects only the selected virtual monitor. See [Monitor orientation](docs/ORIENTATION.md) for support and limits.
 
 Before opening the first stream panel, Quest reads its dimensions over the authenticated connection without starting media, then supplies window-size hints. Saved dimensions or landscape defaults are used if this short check is unavailable. Horizon controls the final outer window size and may preserve a size chosen previously or ignore the hints. The PC’s **System** theme follows the desktop appearance preference, including changes while the app is open.
 
-Updates are hosted by GitHub and signed with the release key. Choose manual checks, notifications or automatic downloads; installation remains explicit. The APK keeps `dev.metuxa.quest` and its signing identity. Version 0.4.1 uses the stable library name **metuxa**, with the version shown inside the app. Published 0.4.0 and earlier APKs still have versioned names. Horizon may retain an older library label or show the package ID; the app cannot guarantee an immediate library refresh. See [Quest app identity](docs/UPDATES.md#quest-library-name-and-installed-version).
+Updates are hosted by GitHub and signed with the release key. Choose manual checks, notifications or automatic downloads; installation remains explicit. The launcher name is **metuxa 🐧**, with the version shown inside the app.
 
-Versions 0.3.0 and 0.4.0 can download the signed 0.4.1 update; installation remains explicit. From 0.2.0, install 0.4.1 manually because that older release has no updater. Do not uninstall a release-signed APK to upgrade it. Read [Updates](docs/UPDATES.md) for signature checks, rollback, permissions and the first-install transition.
+Version 0.4.2 starts the permanent Android package `io.github.romantrnt.metuxa`. Install it manually once: Android treats it as a separate app from `dev.metuxa.quest`, so the old app and its data stay in place. Saved PCs and settings do not transfer. Earlier in-app updaters correctly reject the new package; later updates within the new package work normally. The release signing key and protocol 5 are unchanged. See [Updates](docs/UPDATES.md) for the migration and Horizon's library-label limits.
 
 ## Input without surprises
 
@@ -117,11 +117,9 @@ gradle --no-daemon :app:assembleDebug :app:lintDebug :app:testCore
 
 `assembleDebug` produces a debug-signed APK, not a release signature. See [Build instructions](docs/BUILD.md) for setup, optional backends, packaging and test isolation.
 
-## Scope and verification
+## Security and compatibility
 
-Automated tests cover protocol parsing, input lifecycle, authenticated transport, cross-language interoperability, process supervision and synthetic streaming. They do not establish real-headset latency, comfort, hardware codec reliability or portal compatibility. Read the [verification record](docs/VERIFICATION-0.4.1.md) and [live acceptance checklist](docs/MANUAL-TESTS.md) for what was and was not tested.
-
-The media transport uses standard TLS and AES-GCM primitives in an application-specific protocol. It has **not received an independent security audit**. Use a trusted local network and read the [security model](docs/SECURITY.md). Vulnerability reporting guidance is in [SECURITY.md](SECURITY.md).
+metuxa uses pinned TLS for control and AES-GCM for media, with no plaintext fallback. Use a trusted local network and read the [security model](docs/SECURITY.md). Vulnerability reporting guidance is in [SECURITY.md](SECURITY.md).
 
 The app interfaces are currently English. These README translations cover the documentation only. There is no internet relay, unattended server service or supported microphone forwarding.
 
@@ -131,7 +129,7 @@ The app interfaces are currently English. These README translations cover the do
 - `client/quest/`: Android launcher, panels, input policies and media client.
 - `src/streamer/`: Capture, encoding and authenticated streaming server.
 - `tests/`: Protocol, input, security and synthetic integration checks.
-- `docs/`: Build, security, verification and live test guides.
+- `docs/`: Build, security, configuration and testing guides.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and review expectations.
 

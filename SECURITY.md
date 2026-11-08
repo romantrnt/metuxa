@@ -10,8 +10,8 @@ Check this repository's **Security → Advisories** page for a **Report a vulner
 
 A useful private report includes the affected commit or release, platform versions, a minimal reproduction, expected and actual behavior, and the potential impact. Use synthetic content and disposable test credentials. Do not test on systems or headsets you do not own or have permission to assess.
 
-No response-time guarantee, bug bounty or independent security certification is implied. Use the latest available fixes and review the [verification record](docs/VERIFICATION.md); older releases do not have a promised maintenance window.
+Use the latest available fixes. Older releases do not have a promised maintenance window.
 
 ## Scope
 
-Relevant areas include pairing and certificate verification, encrypted media, replay protection, discovery handling, input authorization and release, diagnostic privacy, process cleanup and dependency packaging. Standard cryptographic primitives and passing automated tests do not amount to an independent audit of this application-specific protocol.
+Relevant areas include pairing and certificate verification, encrypted media, replay protection, discovery handling, input authorization and release, diagnostic privacy, process cleanup and dependency packaging.

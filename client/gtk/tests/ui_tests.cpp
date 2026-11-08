@@ -39,6 +39,20 @@ GtkWidget* find_button(GtkWidget* widget, const char* label) {
     for (auto* child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) if (auto* button = find_button(child, label)) return button;
     return nullptr;
 }
+bool escape_window(Gtk::Window& window) {
+    auto* controllers = gtk_widget_observe_controllers(GTK_WIDGET(window.gobj()));
+    bool handled = false;
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); ++i) {
+        auto* controller = g_list_model_get_item(controllers, i);
+        if (GTK_IS_EVENT_CONTROLLER_KEY(controller)) {
+            gboolean result = false;
+            g_signal_emit_by_name(controller, "key-pressed", GDK_KEY_Escape, 0, static_cast<GdkModifierType>(0), &result);
+            handled = handled || result;
+        }
+        g_object_unref(controller);
+    }
+    g_object_unref(controllers); return handled;
+}
 bool click_dialog(const char* text) {
     auto* windows = gtk_window_get_toplevels();
     for (guint i = 0; i < g_list_model_get_n_items(windows); ++i) {
@@ -110,9 +124,10 @@ struct ControlUiTest {
             if (w.system_appearance_->dark() != true) return false;
             check(!dark(), "Light survives live desktop changes");
             w.theme_.set_selected(0); check(dark(), "Light to System uses latest dark desktop");
-            w.stack_.set_visible_child("preferences"); ++theme_step; return false;
+            w.open_preferences(); ++theme_step; return false;
         case 5:
-            check(snapshot("settings-system-dark"), "System settings screenshot");
+            check(snapshot("settings-system-dark", &w.preferences_window_), "System settings screenshot");
+            w.preferences_window_.close();
             w.stack_.set_visible_child("stream");
             w.theme_.set_selected(1); portal.change(0); ++theme_step; return false;
         case 6:
@@ -129,23 +144,65 @@ struct ControlUiTest {
     }
     bool finished() const { return step == 9 && !w.server_.running() && w.code_.empty() && w.pin_.empty(); }
     int step = 0, ticks = 0;
-    bool snapshot(const char* name) {
+    bool snapshot(const char* name, Gtk::Widget* target = nullptr) {
+        auto& window = target ? *target : static_cast<Gtk::Widget&>(w);
         const char* directory = g_getenv("METUXA_TEST_SCREENSHOTS");
         if (!directory) return true;
-        auto* paintable = gtk_widget_paintable_new(GTK_WIDGET(w.gobj()));
+        auto* paintable = gtk_widget_paintable_new(GTK_WIDGET(window.gobj()));
         auto* snapshot = gtk_snapshot_new();
-        gdk_paintable_snapshot(paintable, GDK_SNAPSHOT(snapshot), w.get_width(), w.get_height());
+        gdk_paintable_snapshot(paintable, GDK_SNAPSHOT(snapshot), window.get_width(), window.get_height());
         auto* node = gtk_snapshot_free_to_node(snapshot);
         if (!node) { g_object_unref(paintable); return false; }
-        auto* renderer = gtk_native_get_renderer(GTK_NATIVE(w.gobj()));
+        auto* renderer = gtk_native_get_renderer(gtk_widget_get_native(window.gobj()));
         auto* texture = gsk_renderer_render_texture(renderer, node, nullptr);
         bool result = texture && gdk_texture_save_to_png(texture, (std::string(directory) + "/" + name + ".png").c_str());
         if (texture) g_object_unref(texture);
         gsk_render_node_unref(node); g_object_unref(paintable); return result;
     }
+    int navigation_step = 0;
+    bool check_navigation() {
+        switch (navigation_step++) {
+        case 0:
+            check(w.get_title() == "metuxa 🐧", "stable visible application title");
+            check(!w.stack_.get_child_by_name("preferences"), "Settings is not a navigation tab");
+            { auto* pages = gtk_stack_get_pages(w.stack_.gobj());
+              check(g_list_model_get_n_items(G_LIST_MODEL(pages)) == 3, "only Stream, Pair headset and Activity tabs");
+              g_object_unref(pages); }
+            w.menu_button_.popup(); return false;
+        case 1:
+            check(w.menu_popover_.get_visible(), "overflow opens");
+            check(snapshot("main-menu", &w.menu_popover_), "overflow screenshot");
+            g_signal_emit_by_name(w.preferences_button_.gobj(), "clicked"); return false;
+        case 2:
+            check(w.preferences_window_.get_visible() && w.stack_.get_visible_child_name() == "stream", "Settings opens separately and preserves tab");
+            w.open_preferences(); check(w.preferences_window_.get_visible(), "repeated Settings reuses its window");
+            w.text_scale_.set_value(150); return false;
+        case 3:
+            check(snapshot("settings-large-text", &w.preferences_window_), "150 percent Settings screenshot");
+            w.text_scale_.set_value(100); w.preferences_window_.close();
+            check(!w.preferences_window_.get_visible(), "Settings close hides it");
+            w.menu_button_.popup(); g_signal_emit_by_name(w.about_button_.gobj(), "clicked"); return false;
+        case 4:
+            check(w.about_window_.get_visible(), "About opens from overflow");
+            check(snapshot("about", &w.about_window_), "About screenshot");
+            w.open_about(); check(escape_window(w.about_window_), "Escape handled in About");
+            check(!w.about_window_.get_visible() && w.stack_.get_visible_child_name() == "stream", "About dismissal preserves navigation");
+            w.stack_.set_visible_child("pair"); w.open_preferences(); return false;
+        case 5:
+            check(escape_window(w.preferences_window_), "Escape handled in Settings");
+            check(!w.preferences_window_.get_visible(), "Escape dismisses Settings");
+            check(w.stack_.get_visible_child_name() == "pair", "Settings returns to the previous tab");
+            w.stack_.set_visible_child("stream");
+            w.menu_button_.popup(); w.menu_popover_.popdown(); return false;
+        case 6:
+            check(!w.menu_popover_.get_visible(), "overflow dismisses without navigation"); return true;
+        default: return true;
+        }
+    }
     bool tick() {
         check(++ticks < 100, "UI test deadline");
         if (!check_theme()) return true;
+        if (!check_navigation()) return true;
         switch (step) {
         case 0:
             check(!w.server_.running() && !w.settings_.remote_input && w.settings_.fps == 72, "initial view-only defaults");
@@ -188,9 +245,10 @@ struct ControlUiTest {
             if (!w.input_active_[0]) break;
             w.on_event(R"({"state":"connected"})");
             check(w.status_badge_.get_text() == "Connected", "authenticated connected status");
-            w.stack_.set_visible_child("preferences"); ++step; break;
+            w.open_preferences(); ++step; break;
         case 5:
-            check(snapshot("settings"), "settings screenshot");
+            check(snapshot("settings", &w.preferences_window_), "settings screenshot");
+            w.preferences_window_.close();
             check(w.close_requested(), "active close is intercepted"); ++step; break;
         case 6:
             if (!click_dialog("Keep sharing")) break;

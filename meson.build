@@ -1,5 +1,5 @@
-project('metuxa', 'cpp',
-  version : '0.4.1',
+project('metuxa', 'cpp', 'c',
+  version : '0.4.2',
   default_options : [
     'cpp_std=c++20',
     'warning_level=2',

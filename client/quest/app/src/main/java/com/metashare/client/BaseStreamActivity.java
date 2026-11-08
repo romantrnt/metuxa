@@ -28,7 +28,7 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
     private int appliedTheme, appliedScale, appliedUiMode;
     private TextView status;
     private QuestToolbar toolbar;
-    private AlertDialog settingsDialog;
+    private AlertDialog settingsDialog, aboutDialog;
     private RemoteInputController input;
     private StreamSession stream;
     private long generation, streamEpoch;
@@ -39,8 +39,7 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
     @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(QuestUi.themedContext(base)); }
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        // Runtime version text is independent of the stable manifest label.
-        setTitle(R.string.app_version_label);
+        setTitle(R.string.app_name);
         settings = new AppSettings(this); appliedTheme = settings.theme(); appliedScale = settings.textScale(); appliedUiMode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
         generation = getIntent().getLongExtra("generation", -1);
         monitorIndex = primary() ? 0 : getIntent().getIntExtra("monitor_index", -1);
@@ -70,6 +69,7 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
             public void onSettingsRequested() {
                 showSettings();
             }
+            public void onAboutRequested() { showAbout(); }
             public void onDisconnectRequested() { requestDisconnect(); }
             public void onOrientationRequested() { chooseOrientation(); }
         });
@@ -202,6 +202,10 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
                 } else showStatus("Desktop orientation is not available right now. Wait for the connection and try again.");
             }).setNegativeButton("Cancel", null).show();
     }
+    private void showAbout() {
+        if (aboutDialog != null && aboutDialog.isShowing()) return;
+        aboutDialog = AboutDialog.show(this); aboutDialog.setOnDismissListener(d -> aboutDialog = null);
+    }
     private void showSettings() {
         input.lostFocus();
         if (settingsDialog != null && settingsDialog.isShowing()) return;
@@ -259,7 +263,7 @@ abstract class BaseStreamActivity extends Activity implements RemoteSurfaceView.
     @Override public void onBackPressed() { if (primary()) requestDisconnect(); else finish(); }
     @Override protected void onDestroy() {
         if (!registered) { super.onDestroy(); return; }
-        destroyed = true; if (settingsDialog != null) settingsDialog.dismiss(); if (root != null) root.close(); stopStream(); if (input != null) input.release();
+        destroyed = true; if (aboutDialog != null) aboutDialog.dismiss(); if (settingsDialog != null) settingsDialog.dismiss(); if (root != null) root.close(); stopStream(); if (input != null) input.release();
         ACTIVE.remove(this); LAUNCHING.remove(monitorIndex); coordinator.unregister(this);
         if (!isChangingConfigurations() && primary() && coordinator.matches(generation)) { LAUNCHING.clear(); coordinator.disconnect(); }
         else if (!isChangingConfigurations() && !primary() && coordinator.matches(generation)) {

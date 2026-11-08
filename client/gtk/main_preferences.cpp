@@ -13,37 +13,45 @@ void MainWindow::build_preferences() {
     auto* scroll = Gtk::make_managed<Gtk::ScrolledWindow>();
     scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
     auto* box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 18);
-    box->set_margin_end(4); scroll->set_child(*box);
-    box->append(label("Settings", "session-title"));
+    box->set_margin(24); scroll->set_child(*box);
+    preferences_window_.set_title("Settings"); preferences_window_.set_default_size(650, 760);
+    preferences_window_.set_size_request(480, 420); preferences_window_.set_transient_for(*this);
+    preferences_window_.set_modal(true); preferences_window_.set_hide_on_close(true); preferences_window_.set_destroy_with_parent(true);
+    auto* header = Gtk::make_managed<Gtk::HeaderBar>();
+    auto* title = Gtk::make_managed<Gtk::Label>("Settings"); title->add_css_class("section-title");
+    header->set_title_widget(*title); preferences_window_.set_titlebar(*header); preferences_window_.set_child(*scroll);
+    auto keys = Gtk::EventControllerKey::create();
+    keys->signal_key_pressed().connect([this](guint key, guint, Gdk::ModifierType) {
+        if (key != GDK_KEY_Escape) return false;
+        preferences_window_.hide(); return true;
+    }, false); preferences_window_.add_controller(keys);
     auto& appearance = section("Appearance");
     auto* group = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 0); group->add_css_class("setting-group");
     theme_.set_model(Gtk::StringList::create({"System", "Dark", "Light", "High contrast"}));
-    group->append(row("Theme", "Changes apply now.", theme_));
+    group->append(row("Theme", "Follow your desktop or choose an appearance.", theme_));
     text_scale_.set_range(85, 150); text_scale_.set_increments(5, 10); text_scale_.set_numeric(true); text_scale_.set_width_chars(4);
     group->append(row("Text size (%)", "Scale labels and controls in this window.", text_scale_));
-    group->append(row("Animations", "Use GTK animations for controls and dialogs.", animations_));
+    group->append(row("Animations", "Animate controls and dialogs.", animations_));
     group->append(row("Remember window size", "Restore the size used last time.", remember_window_));
     group->append(row("Follow new activity", "Scroll to new lines in Activity.", auto_scroll_));
     appearance.append(*group); box->append(appearance);
     auto& updates = section("Updates");
     auto* update_group = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 0); update_group->add_css_class("setting-group");
     updates_.set_model(Gtk::StringList::create({"Manual checks only", "Notify me", "Download automatically"}));
-    update_group->append(row("New stable releases", "Check GitHub while metuxa is open. Installation always waits for you.", updates_));
+    update_group->append(row("New stable releases", "Choose whether to check or download while the app is open.", updates_));
     check_interval_.set_model(Gtk::StringList::create({"Every hour", "Every 6 hours", "Daily", "Weekly"}));
-    update_group->append(row("Check frequency", "No background service is installed.", check_interval_));
+    update_group->append(row("Check frequency", "How often to look for an update.", check_interval_));
     updates.append(*update_group);
     update_status_.set_xalign(0); update_status_.set_wrap(true); update_status_.set_text(std::string("metuxa v") + METUXA_VERSION); updates.append(update_status_);
     update_detail_.set_xalign(0); update_detail_.set_wrap(true); update_detail_.add_css_class("setting-detail");
-    update_detail_.set_text("Updates come from romantrnt/metuxa on GitHub. A pinned signing key verifies the release and its files. The previous AppImage is kept for rollback."); updates.append(update_detail_);
+    update_detail_.set_text("Updates are verified before installation. Your previous AppImage is kept as a backup."); updates.append(update_detail_);
     updates.append(update_progress_); update_progress_.set_visible(false);
     auto* actions = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
     actions->append(check_update_); actions->append(download_update_); actions->append(install_update_); actions->append(cancel_update_);
     updates.append(*actions); skip_update_.set_halign(Gtk::Align::START); updates.append(skip_update_);
-    updates.append(label("The first update from 0.2.0 must be installed manually. Update both the desktop app and Quest when a release requires a newer protocol.", "setting-detail"));
     box->append(updates);
     auto& privacy = section("Privacy and connection");
     privacy.append(label("Sharing starts only when you press Start server. Remote control starts off each time you open metuxa. Pairing approval expires after one minute."));
-    privacy.append(label("Stream quality, sound, discovery and network ports are on the Stream tab. Change those settings while the server is stopped. Virtual-monitor orientation and panel visibility are in Quest controls. Physical screens always follow the PC.", "setting-detail"));
     box->append(privacy);
     auto* reset = Gtk::make_managed<Gtk::Button>("Reset app preferences"); reset->set_halign(Gtk::Align::START);
     reset->signal_clicked().connect([this] {
@@ -52,7 +60,6 @@ void MainWindow::build_preferences() {
         animations_.set_active(true); auto_scroll_.set_active(true); remember_window_.set_active(true);
         preferences_loading_ = false; apply_preferences(); save_app_preferences(); schedule_update_check();
     }); box->append(*reset);
-    stack_.add(*scroll, "preferences", "Settings");
     preferences_loading_ = true;
     for (unsigned i=0;i<4;++i) if (preferences_.theme == themes[i]) theme_.set_selected(i);
     for (unsigned i=0;i<3;++i) if (preferences_.updates == modes[i]) updates_.set_selected(i);
@@ -81,6 +88,42 @@ void MainWindow::build_preferences() {
         update_status_.set_text("This version is skipped. Check now to show it again."); update_controls();
     });
     update_controls();
+}
+void MainWindow::open_preferences() { preferences_window_.present(); }
+void MainWindow::open_about() { about_window_.present(); }
+void MainWindow::build_about() {
+    about_window_.set_title("About metuxa"); about_window_.set_default_size(480, 680);
+    about_window_.set_transient_for(*this); about_window_.set_modal(true);
+    about_window_.set_hide_on_close(true); about_window_.set_destroy_with_parent(true);
+    auto* header = Gtk::make_managed<Gtk::HeaderBar>();
+    auto* title = Gtk::make_managed<Gtk::Label>("About metuxa"); title->add_css_class("section-title");
+    header->set_title_widget(*title); about_window_.set_titlebar(*header);
+    auto* scroll = Gtk::make_managed<Gtk::ScrolledWindow>(); scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
+    auto* box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 14); box->set_margin(30);
+    auto* tux = Gtk::make_managed<Gtk::Picture>(); tux->set_resource("/dev/metuxa/Control/metuxa-tux.png");
+    tux->set_content_fit(Gtk::ContentFit::CONTAIN); tux->set_size_request(170, 170); tux->set_can_shrink(true);
+    tux->set_alternative_text("Tux holding the blue Meta infinity symbol"); box->append(*tux);
+    auto* name = Gtk::make_managed<Gtk::Label>("metuxa"); name->add_css_class("about-brand"); box->append(*name);
+    auto* version = Gtk::make_managed<Gtk::Label>(std::string("Version ") + METUXA_VERSION); version->add_css_class("metuxa-version"); box->append(*version);
+    auto centered = [box](const std::string& text, const std::string& style = "") {
+        auto* value = Gtk::make_managed<Gtk::Label>(text); value->set_wrap(true);
+        value->set_justify(Gtk::Justification::CENTER); value->set_max_width_chars(44);
+        if (!style.empty()) value->add_css_class(style);
+        box->append(*value);
+    };
+    centered("Your Linux desktop on Meta Quest.");
+    centered("Share screens and sound over your local network. Pair your headset and choose when it can control your PC.", "setting-detail");
+    auto* project = Gtk::make_managed<Gtk::LinkButton>("https://github.com/romantrnt/metuxa", "metuxa on GitHub"); box->append(*project);
+    centered("An independent continuation of MetaShare.", "setting-detail");
+    auto* upstream = Gtk::make_managed<Gtk::LinkButton>("https://github.com/makemake-kbo/metashare", "Original project"); box->append(*upstream);
+    centered("Source code: MIT license. The AppImage includes GPL-licensed components.", "setting-detail");
+    auto* licenses = Gtk::make_managed<Gtk::LinkButton>("https://github.com/romantrnt/metuxa/blob/main/THIRD-PARTY-NOTICES.md", "Licenses and credits"); box->append(*licenses);
+    scroll->set_child(*box); about_window_.set_child(*scroll);
+    auto keys = Gtk::EventControllerKey::create();
+    keys->signal_key_pressed().connect([this](guint key, guint, Gdk::ModifierType) {
+        if (key != GDK_KEY_Escape) return false;
+        about_window_.hide(); return true;
+    }, false); about_window_.add_controller(keys);
 }
 void MainWindow::apply_theme() {
     auto settings = Gtk::Settings::get_default();

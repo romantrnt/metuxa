@@ -2,7 +2,7 @@
 
 A native GTK4/gtkmm application that supervises `metuxa-server`. It does not
 capture, encode, or connect to the headset by itself. Opening the app never
-starts sharing. The new application ID is `dev.metuxa.Control`; installation
+starts sharing. The application ID is `dev.metuxa.Control`; installation
 must not replace `dev.metashare.StreamerUI` or the original MetaShare binaries.
 
 ## Workflow
@@ -26,7 +26,6 @@ Screen source uses the portal-selected physical display followed by virtual
 screens where the compositor supports them. Window source is one selected
 application window and is always view-only. GNOME mode uses the Mutter virtual
 backend for extra screens. Test pattern never requests capture, sound, or input.
-Real headset and compositor behavior still requires device testing.
 
 ## Configuration and privacy
 
@@ -47,6 +46,12 @@ Real headset and compositor behavior still requires device testing.
   race check, so a GUI crash cannot leave its capture process alive. Normal close
   first asks whether to stop sharing and waits for exit.
 
+The header shows the installed version beside **metuxa**. The three-dot menu
+opens **Settings**, **About metuxa**, and diagnostic export. Settings has its
+own window, so closing it returns to the same Stream, Pair headset or Activity
+tab. About includes the Tux mascot, project links and license information.
+The desktop launcher name is **metuxa 🐧**.
+
 Appearance and update preferences are available in **Settings**. **System** reads
 the desktop Settings portal's color-scheme preference and follows changes while
 the app is open, including in the AppImage. When the portal has no preference or
@@ -54,8 +59,8 @@ is unavailable, it uses GNOME's color-scheme setting if available, then GTK's
 native default. **Dark**, **Light** and **High contrast** remain explicit overrides.
 Returning to **System** uses the current desktop preference.
 
-Update checks
-and downloads are opt-in; installation is explicit and requires sharing to stop.
+Update checks and downloads are opt-in; installation is explicit and requires
+sharing to stop.
 See [Updates](../../docs/UPDATES.md) for signatures and AppImage replacement.
 
 ## Server status contract
@@ -75,7 +80,7 @@ See [Updates](../../docs/UPDATES.md) for signatures and AppImage replacement.
 {"type":"capability","monitor":0,"input_available":true,"input_active":true,"audio_active":true}
 ```
 
-Monitor indices are zero-based, 0–2. Only explicit capability events enable the
+Monitor indices are zero-based, 0-2. Only explicit capability events enable the
 live input switch. SIGUSR1 blocks input, SIGUSR2 re-enables only initially granted
 input. Input-event payloads must never be included in the status channel.
 
@@ -111,8 +116,8 @@ its own synthetic mock child. It checks live System theme changes and explicit o
 UI, private pairing, live input gates, cancel-close, and stop-close. Optional PNGs
 contain documentation-only addresses and synthetic, hidden credentials.
 
-`gtkmm_compat.hpp` isolates three wrapper class-alias conflicts in the host's
-GTK 4.25 / GLib 2.90 development snapshot with older gtkmm/glibmm bindings. It
+`gtkmm_compat.hpp` handles wrapper class-alias conflicts between GTK 4.25 /
+GLib 2.90 development snapshots and older gtkmm/glibmm bindings. It
 changes no installed headers, object layouts, or instance/function types. Stable
 SDK builds take the normal include path. Release packaging should use a matched
 stable runtime and SDK.

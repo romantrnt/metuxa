@@ -1,6 +1,10 @@
 # Signed GitHub updates
 
-Versions 0.3.0 and 0.4.0 can check for and download the signed 0.4.1 update; installation remains explicit. Version 0.2.0 has no updater, so install 0.4.1 manually from that version, using the official APK with the same signing identity or replacing the AppImage. Do not uninstall the Android app: a normal signed update keeps settings and pairing data. Debug-signed installations cannot accept production updates.
+Updates are hosted on GitHub and signed with the metuxa release key. Checking
+and downloading can be automated; installation remains explicit. Android
+updates preserve settings when the package ID and signing identity match.
+The package change in 0.4.2 requires a one-time manual installation, described
+below. Debug-signed installations cannot accept production updates.
 
 Both clients retrieve `https://github.com/romantrnt/metuxa/releases/latest/download/update-manifest.txt`. GitHub supplies hosting and TLS; the existing metuxa release key authenticates the manifest independently. The public key is in `data/update-public-key.pem`. Private signing files stay outside the checkout. New signing identities or key rotation require a reviewed app release and are not accepted through a downloaded manifest.
 
@@ -8,8 +12,8 @@ The envelope starts with one standard Base64 RSA/SHA-256 PKCS#1 v1.5 signature l
 
 ```text
 metuxa-update-v1
-version=0.4.1
-version_code=6
+version=0.4.2
+version_code=7
 protocol_min=5
 protocol_max=5
 android_size=123
@@ -31,44 +35,47 @@ Downloads allow bounded HTTPS redirects only to GitHub and its named release ass
 
 The APK package, version and signer must match the signed release and the pinned production certificate. The installed app must have the production signer too. The updater writes a private cache file, verifies it, and submits it to Android PackageInstaller with user action required. Android may require the user to allow installation from metuxa in system settings and confirm each update. A normal unprivileged app cannot promise silent installation on Quest. Receiver status persists across activity recreation. Failed/cancelled downloads remove temporary files, failed uncommitted sessions are abandoned, and committed sessions belong to Android. On the next install attempt, the updater also recovers its own uncommitted sessions left by process death. No uninstall or data-clear operation is used.
 
-Close/cancel stops a download and prevents callbacks into a destroyed UI. Android continues an already committed installation independently. Complete or cancel an outstanding installer prompt before starting another install. Device testing must cover permission denial, confirmation cancellation, process death, insufficient storage and successful upgrade over the previous signed APK.
+Close/cancel stops a download and prevents callbacks into a destroyed UI. Android continues an already committed installation independently. Complete or cancel an outstanding installer prompt before starting another install.
+
+## Android package migration
+
+Starting with 0.4.2, the Android application ID is `io.github.romantrnt.metuxa`,
+matching the project's GitHub owner. Earlier metuxa releases used
+`dev.metuxa.quest`. The Java source namespace remains `com.metashare.client`;
+that namespace does not determine Android's installed-app identity.
+
+Install the official 0.4.2 APK manually as a new app. Android gives it separate
+private storage and permissions. It can coexist with the old metuxa app and
+MetaShare. Installing it does not uninstall, clear or copy the old app's data.
+Saved PCs, input settings, installer permission and update history start fresh.
+Pair again in the new app. AndroidKeyStore keys belong to the old app's UID, so
+copying its encrypted pairing tokens would not make them readable by the new
+app. Cloud backups and device transfer exclude app data in both packages.
+
+The APK release signer, signed-manifest format, download repository and stream
+protocol 5 remain unchanged. The new app only accepts its own package ID and
+the pinned release signer. Future updates within that ID keep its settings.
+No cross-package trust exception or automatic data migration is introduced.
+
+Older updaters still read the shared latest-release manifest. They may announce
+or download 0.4.2, but reject its different package ID before installation.
+Their package check cannot be changed remotely; use the manual APK installation
+for this transition. The Linux updater is unaffected by the Android ID change.
+Published releases retain their original package identities.
 
 ## Quest library name and installed version
 
-Published 0.3.0 and 0.4.0 APKs used `metuxa vVERSION` as the Android application
-label. A successful 0.3.0 → 0.4.0 headset upgrade was reported with `metuxa v0.3.0`
-still in Unknown Sources while the running window showed 0.4.0. This is consistent
-with a stale Horizon library entry; it is not evidence that the APK failed to
-update. That particular headset cache has not been inspected directly.
+The application, launcher and requested Activity title are **metuxa 🐧**, with
+no version number. The installed version appears in smaller gray text beside
+**metuxa** in the launcher, and in **Settings** and **About**. Both are in the
+three-dot menu. Gradle generates the version resources from `versionName`.
 
-Version 0.4.1 separates persistent identity from runtime version text:
-
-- `@string/app_name` is the fixed, non-translatable `metuxa` application label.
-  Activities and launcher intent filters inherit it without a version override.
-- Gradle generates `@string/app_version_label` from `versionName` for the launcher
-  footer, Settings, initial Updates status and the running Activities' requested
-  window title.
-  Check the in-app version or Android's installed-package version, not an old
-  Unknown Sources label. Horizon may ignore the requested window title.
-- The package ID, launcher component, signing identity and stored preferences
-  remain unchanged. Version 0.4.1 uses code 6; stream protocol remains 5. No alias
-  rotation, component disabling, uninstall, data clear or Home restart is used to force a refresh.
-
-Android documents [Activity-label inheritance](https://developer.android.com/guide/topics/manifest/activity-element#label)
-and [intent-filter-label inheritance](https://developer.android.com/guide/topics/manifest/intent-filter-element#label).
-These describe package metadata, not when Horizon refreshes Unknown Sources.
-No documented app-level guarantee of an immediate Horizon refresh was found.
-The stable label prevents future release numbers from becoming stale once the
-library has reread it; it cannot evict an older cached label by itself.
-
-The published 0.4.0 APK is not changed retroactively. Install the signed 0.4.1
-update in place with the same signer.
-After that in-place update, first reopen the library. If its old label persists,
-a normal headset restart when no session is in use is a non-destructive check,
-not a guaranteed cure or a requirement for the app update. Do not force-stop
-Home during an active session, clear Home or metuxa data, uninstall metuxa, or
-factory-reset the headset to fix a cosmetic label. Preferences and pairing data
-must survive the normal signed upgrade.
+Horizon can retain an earlier library label or ignore a requested window title.
+Use the in-app version or Android's installed-package information to check the
+build. Android documents [Activity-label inheritance](https://developer.android.com/guide/topics/manifest/activity-element#label)
+and [intent-filter-label inheritance](https://developer.android.com/guide/topics/manifest/intent-filter-element#label),
+not when Horizon refreshes Unknown Sources. Do not clear app or Home data,
+uninstall an app, or force-stop Home to correct a cosmetic label.
 
 ## Linux installation
 
@@ -84,22 +91,22 @@ Build and sign the release APK, build the clean-baseline AppImage, and complete 
 
 ```sh
 JAVA_HOME=/path/to/jdk17 ANDROID_HOME=/path/to/android-sdk \
-  bash scripts/sign-update-manifest.sh 0.4.1 6 5 5 \
-  dist/metuxa-0.4.1-arm64-v8a.apk \
-  dist/metuxa-0.4.1-x86_64.AppImage \
+  bash scripts/sign-update-manifest.sh 0.4.2 7 5 5 \
+  dist/metuxa-0.4.2-arm64-v8a.apk \
+  dist/metuxa-0.4.2-x86_64.AppImage \
   dist/update-manifest.txt
 ```
 
-The helper verifies the APK signer, package, version and non-debuggable status before signing. It uses the existing `metuxa-release` identity and refuses to overwrite its output. It creates no credentials. Publish the manifest and both binary assets under tag `v0.4.1`, alongside the required exact source and dependency-source archives. Upload everything before promoting the release to latest. Keep source/code/protocol numbers consistent across clients and manifest. Never sign substitute bytes merely to test a public download path.
+The helper verifies the APK signer, package, version and non-debuggable status before signing. It uses the existing `metuxa-release` identity and refuses to overwrite its output. It creates no credentials. Publish the manifest and both binary assets under tag `v0.4.2`, alongside the required exact source and dependency-source archives. Upload everything before promoting the release to latest. Keep source/code/protocol numbers consistent across clients and manifest. Never sign substitute bytes merely to test a public download path.
 
-Run `bash client/quest/tests/run-update-tests.sh` for standalone verifier tests. They use ephemeral in-memory test keys and cover tampering, wrong identity, rollback, incompatible protocol, invalid field layout, oversized payloads/assets and repeated verification. They do not install an APK or prove on-device installer behavior.
+Run `bash client/quest/tests/run-update-tests.sh` for standalone verifier tests. They use ephemeral in-memory test keys and cover tampering, wrong identity, rollback, incompatible protocol, invalid field layout, oversized payloads/assets and repeated verification.
 
 Verify final manifest and artifact bytes offline before uploading:
 
 ```sh
 JAVA_HOME=/path/to/jdk17 bash scripts/verify-update-manifest.sh \
-  dist/update-manifest.txt dist/metuxa-0.4.1-arm64-v8a.apk \
-  dist/metuxa-0.4.1-x86_64.AppImage 0.4.0 5
+  dist/update-manifest.txt dist/metuxa-0.4.2-arm64-v8a.apk \
+  dist/metuxa-0.4.2-x86_64.AppImage 0.4.1 6
 ```
 
-The command above checks the upgrade from 0.4.0/code 5 using the application's production public key. Without the optional final version/code arguments, the verifier defaults to 0.2.0/code 3. Neither path changes the trust pin. It also checks the authenticated exact-current announcement path. It never opens private signing files or runs the artifacts.
+The command above verifies the signed manifest and artifact bytes against the 0.4.1/code 6 baseline using the application's production public key. It does not install an APK or establish cross-package upgrade support; the Android package migration still requires a manual installation. Without the optional final version/code arguments, the verifier defaults to 0.2.0/code 3. Neither path changes the trust pin. It also checks the authenticated exact-current announcement path. It never opens private signing files or runs the artifacts.

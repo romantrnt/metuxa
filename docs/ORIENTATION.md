@@ -43,10 +43,6 @@ During an accepted request, the affected monitor's media and input are paused an
 
 The per-monitor signaling thread serializes a resize and the following reconnect, so a new peer cannot receive an intermediate HELLO. An accepted operation may finish if its requesting peer disconnects; it cannot queue a later operation for the new peer. On restoration failure the server sends `restart_required` before closing the affected monitor connection. The client stops automatic retries and asks the user to stop and start sharing on the PC. It does not restart the host session itself. This result is used only after confirmed restoration failure; ordinary `failed` responses retain their reconnect behavior. No global display restoration is attempted.
 
-## Verification boundaries
-
-Unit and isolated TLS tests cover source-type enforcement, dimension validation, encoder reconfiguration, rollback, repeated requests, connection loss and reconnect metadata. A separate isolated Mutter 50.5/PipeWire 1.6.9 test verifies three real portrait/landscape cycles, actual DisplayConfig modes with normal transform, matching captured frame dimensions, retained stream identity, an unchanged second monitor and cleanup. It runs without the user’s display, bus, devices or network. This direct-backend check does not validate the portal picker, application-specific reflow, Quest decoding or Horizon window sizing. Live desktop capture and headset testing are deliberate manual checks, not part of automated unattended testing. See [Manual tests](MANUAL-TESTS.md).
-
 ## Upstream behavior
 
 - The [public ScreenCast API](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html) returns source type and stream metadata but has no physical-monitor orientation setter.

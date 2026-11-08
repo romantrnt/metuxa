@@ -22,7 +22,7 @@ The clients pin the public key of the existing release signing identity. They ve
 
 Each authenticated monitor connection gets fresh, independent server-to-client and client-to-server AES-256-GCM keys and nonce prefixes over TLS. The authenticated UDP envelope covers RTP and RTCP. It includes a direction and monotonically increasing packet counter, with a bounded replay window and a per-key counter limit. Invalid authentication, wrong direction, old/replayed packets and malformed envelopes are discarded before packet parsing. No raw-RTP fallback is available.
 
-This is an application-specific envelope built from standard TLS/AES-GCM primitives, **not an independently audited protocol or an SRTP/DTLS certification**. Review and real-device validation remain necessary; consult the verification record and the notes for the exact release you use. Traffic timing, packet sizes and local discovery metadata remain visible. Discovery offers are only hints; authentication does not trust them.
+The application-specific media envelope uses TLS and AES-GCM. It does not use SRTP or DTLS. Traffic timing, packet sizes and local discovery metadata remain visible. Discovery offers are only hints; authentication does not trust them.
 
 ## Input and permissions
 
@@ -53,8 +53,8 @@ No global hand-tracking permission is changed. Movement/hover, clicks/drag and s
 
 The wire counter is 64 bits, but both implementations enforce a lower per-key packet limit: valid counters are 1 through 2^32−1 for each direction of each authenticated monitor connection. There is no automatic rekey. Once the limit is reached, media protection refuses additional packets and that connection's media may stop; manually disconnect and reconnect to obtain fresh keys. This fails closed rather than reusing a nonce or falling back to plaintext. Time to exhaustion depends on packet rate, so there is no fixed guaranteed session duration.
 
-## Automated verification
+## Security tests
 
 `sh tests/security/run.sh` builds isolated C++ and pure-Java tests, creates only ephemeral test credentials, and opens loopback sockets without capture, audio devices or desktop input. Set `JAVA`/`JAVAC` to a JDK 17 installation if necessary. Set `SECURITY_TEST_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g'` for the sanitizer variant. Meson also runs the C++ portion as the `security` test.
 
-The suite covers valid authenticated control, wrong token, wrong certificate fingerprint, plaintext rejection, byte-fragmented/coalesced TLS messages, abrupt partial-message disconnect, line bounds, prompt shutdown, real encrypted RTP, forged/wrong-source/replayed RTCP, explicit input release and disconnect release, primary-only audio advertisement, cross-language AES-GCM wire equivalence, replay-window advancement/reordering, successful Java SSLSocket to OpenSSL interoperability, and a session longer than 12 seconds against the actual RTP server with live input disable/enable updates. Passing these tests does not establish real-headset performance or independent cryptographic audit.
+The suite covers valid authenticated control, wrong token, wrong certificate fingerprint, plaintext rejection, byte-fragmented/coalesced TLS messages, abrupt partial-message disconnect, line bounds, prompt shutdown, real encrypted RTP, forged/wrong-source/replayed RTCP, explicit input release and disconnect release, primary-only audio advertisement, cross-language AES-GCM wire equivalence, replay-window advancement/reordering, successful Java SSLSocket to OpenSSL interoperability, and a session longer than 12 seconds against the actual RTP server with live input disable/enable updates.

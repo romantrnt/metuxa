@@ -63,7 +63,7 @@ std::string asset(char fill = 'q') {
     result[8] = 'A'; result[9] = 'I'; result[10] = 2; result[18] = 62; result[19] = 0;
     return result;
 }
-std::string payload(const std::string& content, const std::string& version = "0.5.0", int code = 7) {
+std::string payload(const std::string& content, const std::string& version = "0.5.0", int code = 8) {
     return "metuxa-update-v1\nversion=" + version + "\nversion_code=" + std::to_string(code) +
         "\nprotocol_min=5\nprotocol_max=5\nandroid_size=123\nandroid_sha256=" + std::string(64, 'a') +
         "\nlinux_size=" + std::to_string(content.size()) + "\nlinux_sha256=" + sha256(content) + "\n";
@@ -95,7 +95,7 @@ int main() {
     const auto content = asset(); const auto valid_payload = payload(content); const auto document = signer.sign(valid_payload);
     std::string error, backup; Manifest manifest;
     check(parse_signed_manifest(document, signer.public_key, manifest, error), "valid RSA SHA256 signed manifest: " + error);
-    check(manifest.info.version == "0.5.0" && manifest.info.version_code == 7 && manifest.info.linux_size == content.size() &&
+    check(manifest.info.version == "0.5.0" && manifest.info.version_code == 8 && manifest.info.linux_size == content.size() &&
         manifest.protocol_min == 5 && manifest.protocol_max == 5 && manifest.info.signed_manifest == document, "parsed exact metadata");
     check(compatible_manifest(manifest, error), "protocol 5 accepted");
     check(!parse_signed_manifest(document, pinned_public_key(), manifest, error), "production key rejects ephemeral signer");
@@ -107,9 +107,9 @@ int main() {
     check(!parse_signed_manifest(replace(document, "\n", "\r\n"), signer.public_key, manifest, error), "signature CRLF rejected");
     const std::array<std::pair<std::string, std::string>, 16> invalid_fields{{
         {"version=0.5.0", "version=00.5.0"}, {"version=0.5.0", "version=0.5.1000"},
-        {"version=0.5.0", "version=0.5.0-beta"}, {"version_code=7", "version_code=07"},
-        {"version_code=7", "version_code=0"}, {"version_code=7", "version_code=2147483648"},
-        {"version_code=7", "version_code=+7"}, {"protocol_min=5", "protocol_min=6"},
+        {"version=0.5.0", "version=0.5.0-beta"}, {"version_code=8", "version_code=08"},
+        {"version_code=8", "version_code=0"}, {"version_code=8", "version_code=2147483648"},
+        {"version_code=8", "version_code=+7"}, {"protocol_min=5", "protocol_min=6"},
         {"android_size=123", "android_size=268435457"}, {"android_size=123", "android_size=0"},
         {"linux_size=4096", "linux_size=536870913"}, {"linux_size=4096", "linux_size=04096"},
         {"linux_size=4096", "linux_size=18446744073709551616"}, {"android_sha256=aaaa", "android_sha256=AAAA"},
@@ -142,16 +142,16 @@ int main() {
         check(read_file(f.target + ".update-manifest") == signed_release, "signed anti-replay receipt persisted");
         struct stat st{}; check(stat(f.target.c_str(), &st) == 0 && (st.st_mode & 0777) == 0755 && st.st_nlink == 1, "replacement executable, no hardlink");
         check(stat((f.target + ".update-manifest").c_str(), &st) == 0 && (st.st_mode & 0777) == 0600, "receipt private");
-        check(!install_for_test(signer.sign(payload(f.replacement, "0.4.9", 7)), signer.public_key, f.stage, f.target, backup, error), "receipt blocks lower version and reused code");
+        check(!install_for_test(signer.sign(payload(f.replacement, "0.4.9", 8)), signer.public_key, f.stage, f.target, backup, error), "receipt blocks lower version and reused code");
         check(read_file(f.target) == f.replacement, "replay rejection preserves installed image");
-        check(!install_for_test(signer.sign(payload(f.replacement, "0.6.0", 7)), signer.public_key, f.stage, f.target, backup, error), "receipt blocks reused code with higher version");
+        check(!install_for_test(signer.sign(payload(f.replacement, "0.6.0", 8)), signer.public_key, f.stage, f.target, backup, error), "receipt blocks reused code with higher version");
         check(install_for_test(signed_release, signer.public_key, f.stage, f.target, backup, error), "same signed candidate retry is safe: " + error);
         for (auto& item : std::filesystem::directory_iterator(f.directory)) check(!item.path().filename().string().starts_with(".metuxa-update-"), "no temporary replacement leftovers");
     }
     {
         Fixture f;
         check(!install_for_test(signer.sign(payload(f.replacement, "0.2.0", 3)), signer.public_key, f.stage, f.target, backup, error), "running-version downgrade blocked");
-        check(!install_for_test(signer.sign(payload(f.replacement, "0.9.0", 6)), signer.public_key, f.stage, f.target, backup, error), "running-version code floor enforced");
+        check(!install_for_test(signer.sign(payload(f.replacement, "0.9.0", 7)), signer.public_key, f.stage, f.target, backup, error), "running-version code floor enforced");
         check(!install_for_test(signer.sign(payload(f.replacement)), signer.public_key, f.stage, f.target, backup, error, [] { return true; }), "cancel before installation");
         check(read_file(f.target) == f.previous && !std::filesystem::exists(f.target + ".update-manifest"), "cancel preserves old file and receipt state");
     }

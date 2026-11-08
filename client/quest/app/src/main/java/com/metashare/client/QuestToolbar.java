@@ -16,6 +16,7 @@ final class QuestToolbar {
         void onPointerToggle();
         void onSettingsRequested();
         void onDisconnectRequested();
+        default void onAboutRequested() {}
         default void onOrientationRequested() {}
         default void onLocalControlActivated() {}
     }
@@ -35,7 +36,6 @@ final class QuestToolbar {
         count = QuestUi.text(activity, "1 / 1", 14, QuestUi.color(activity, R.color.quest_muted)); count.setGravity(Gravity.CENTER); count.setPadding(QuestUi.dp(activity, 8), 0, QuestUi.dp(activity, 8), 0);
         if (primary) { controls.addView(minus); controls.addView(count); controls.addView(plus); }
         orientation = QuestUi.button(activity, "Display", false); controls.addView(orientation); orientation.setOnClickListener(v -> { callbacks.onLocalControlActivated(); callbacks.onOrientationRequested(); });
-        Button settings = QuestUi.button(activity, "Settings", false); controls.addView(settings); settings.setOnClickListener(v -> { callbacks.onLocalControlActivated(); callbacks.onSettingsRequested(); });
         Button disconnect = QuestUi.button(activity, "Disconnect", false); disconnect.setTextColor(QuestUi.color(activity, R.color.quest_error));
         disconnect.setContentDescription("Disconnect all metuxa screens"); disconnect.setOnClickListener(v -> { callbacks.onLocalControlActivated(); callbacks.onDisconnectRequested(); });
         for (int i = 0; i < controls.getChildCount(); i++) {
@@ -45,7 +45,7 @@ final class QuestToolbar {
         scroll.addView(controls, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.MATCH_PARENT));
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, height(activity), Gravity.BOTTOM);
         // More exposes every action without requiring a horizontal swipe on Quest.
-        Button more = QuestUi.button(activity, "More", false); more.setContentDescription("All monitor controls");
+        Button more = QuestUi.overflowButton(activity, "More options");
         more.setOnClickListener(v -> {
             callbacks.onLocalControlActivated();
             android.widget.PopupMenu menu = new android.widget.PopupMenu(activity, more);
@@ -57,6 +57,7 @@ final class QuestToolbar {
                 menu.getMenu().add(0, 6, 5, "Close the last monitor").setEnabled(minus.isEnabled());
             }
             menu.getMenu().add(0, 7, 6, "Disconnect all screens");
+            menu.getMenu().add(0, 8, 7, "About");
             menu.setOnMenuItemClickListener(item -> {
                 callbacks.onLocalControlActivated();
                 switch (item.getItemId()) {
@@ -67,6 +68,7 @@ final class QuestToolbar {
                     case 5: callbacks.onScreenCountRequested(screenCount + 1); break;
                     case 6: callbacks.onScreenCountRequested(screenCount - 1); break;
                     case 7: callbacks.onDisconnectRequested(); break;
+                    case 8: callbacks.onAboutRequested(); break;
                     default: return false;
                 }
                 return true;
@@ -79,13 +81,13 @@ final class QuestToolbar {
         disconnect.measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED);
         int disconnectWidth = Math.max(QuestUi.dp(activity, 132), disconnect.getMeasuredWidth());
         more.measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED);
-        int moreWidth = Math.max(QuestUi.dp(activity, 64), more.getMeasuredWidth());
+        int moreWidth = QuestUi.dp(activity, 48);
         FrameLayout.LayoutParams scrollParams = new FrameLayout.LayoutParams(-1, -1); scrollParams.setMarginEnd(disconnectWidth + moreWidth + QuestUi.dp(activity, 12));
         footer.addView(scroll, scrollParams);
         TextView compact = QuestUi.text(activity, primary ? "Screens" : "Monitor", 14, QuestUi.color(activity, R.color.quest_muted));
         compact.setGravity(Gravity.CENTER_VERTICAL); compact.setSingleLine(true); compact.setEllipsize(android.text.TextUtils.TruncateAt.END);
         compact.setPadding(QuestUi.dp(activity, 12), 0, 0, 0); compact.setVisibility(android.view.View.INVISIBLE);
-        compact.setContentDescription("Use More for all monitor controls");
+        compact.setContentDescription("Open More options for all monitor controls");
         footer.addView(compact, new FrameLayout.LayoutParams(scrollParams));
         // Collapse the entire row before a half-button is exposed. More contains every action.
         scroll.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {

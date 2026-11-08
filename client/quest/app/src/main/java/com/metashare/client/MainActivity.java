@@ -43,7 +43,8 @@ public final class MainActivity extends Activity {
     private StreamMetadataProbe metadataProbe;
     private long pendingPrimaryGeneration = -1;
     private boolean scanned, applyingProfile, refreshingTheme;
-    private AlertDialog diagnosticsDialog, pairingDialog, updateDialog, settingsDialog;
+    private AlertDialog diagnosticsDialog, pairingDialog, updateDialog, settingsDialog, aboutDialog;
+    private android.widget.PopupMenu overflowMenu;
     private PairingClient pairing;
     private UpdateManager updater;
     private UpdateManager.Release availableUpdate;
@@ -62,8 +63,7 @@ public final class MainActivity extends Activity {
     @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(QuestUi.themedContext(base)); }
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        // Runtime version text is independent of the stable manifest label.
-        setTitle(R.string.app_version_label);
+        setTitle(R.string.app_name);
         settings = new AppSettings(this); updater = new UpdateManager(this);
         appliedTheme = settings.theme(); appliedScale = settings.textScale(); appliedUiMode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
@@ -83,10 +83,12 @@ public final class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(QuestUi.color(this, R.color.quest_background));
         LinearLayout page = QuestUi.column(this); int margin = QuestUi.dp(this, 20); page.setPadding(margin, margin, margin, margin);
         LinearLayout header = QuestUi.row(this), identity = QuestUi.column(this);
-        TextView brand = QuestUi.text(this, "metuxa", 28, QuestUi.color(this, R.color.quest_text)); brand.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); brand.setLetterSpacing(-0.025f); brand.setAccessibilityHeading(true); identity.addView(brand);
+        identity.addView(QuestUi.brand(this));
         identity.addView(QuestUi.text(this, "PC monitors on your Quest", 14, QuestUi.color(this, R.color.quest_muted)));
         header.addView(identity, new LinearLayout.LayoutParams(0, -2, 1));
-        Button settingsButton = QuestUi.button(this, "Settings", false); header.addView(settingsButton); settingsButton.setOnClickListener(v -> showSettings());
+        Button more = QuestUi.overflowButton(this, "More options");
+        LinearLayout.LayoutParams moreParams = new LinearLayout.LayoutParams(QuestUi.dp(this, 48), QuestUi.dp(this, 48)); moreParams.setMarginStart(QuestUi.dp(this, 12));
+        header.addView(more, moreParams); more.setOnClickListener(this::showMenu);
         page.addView(header); QuestUi.space(page, 20);
         sessionStatus = QuestUi.text(this, "", 14, QuestUi.color(this, R.color.quest_accent)); sessionStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); page.addView(sessionStatus);
         LinearLayout live = QuestUi.actions(this); resumeButton = QuestUi.button(this, "Return to screens", true); disconnectButton = QuestUi.button(this, "Disconnect all", false);
@@ -188,7 +190,7 @@ public final class MainActivity extends Activity {
         diagnostics.setOnCheckedChangeListener((b, checked) -> coordinator.diagnostics.setEnabled(checked));
         controls.addView(QuestUi.text(this, "Keeps up to 80 pointer metadata samples in memory. It does not record positions, typing or screenshots.", 13, QuestUi.color(this, R.color.quest_muted)));
         QuestUi.space(controls, 12); Button inspect = QuestUi.button(this, "Inspect / reset metadata", false); controls.addView(inspect, new LinearLayout.LayoutParams(-1, -2)); inspect.setOnClickListener(v -> showDiagnostics());
-        QuestUi.space(page, 18); page.addView(QuestUi.text(this, getString(R.string.app_version_label), 13, QuestUi.color(this, R.color.quest_muted)));
+
         scroll.addView(page); setContentView(scroll);
     }
     private EditText field(LinearLayout parent, String label, String hint, boolean secret) {
@@ -297,6 +299,21 @@ public final class MainActivity extends Activity {
     private void cancelPairing() {
         PairingClient old = pairing; pairing = null; if (old != null) old.cancel();
         if (pairingDialog != null) { pairingDialog.dismiss(); pairingDialog = null; }
+    }
+    private void showMenu(View anchor) {
+        if (overflowMenu != null) return;
+        android.widget.PopupMenu menu = new android.widget.PopupMenu(this, anchor, android.view.Gravity.END);
+        overflowMenu = menu;
+        menu.getMenu().add(0, 1, 0, "Settings"); menu.getMenu().add(0, 2, 1, "About");
+        menu.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == 1) showSettings(); else showAbout(); return true;
+        });
+        menu.setOnDismissListener(d -> { if (overflowMenu == menu) overflowMenu = null; }); menu.show();
+    }
+    private void showAbout() {
+        if (aboutDialog != null && aboutDialog.isShowing()) return;
+        aboutDialog = AboutDialog.show(this);
+        aboutDialog.setOnDismissListener(d -> aboutDialog = null);
     }
     private void showSettings() {
         if (settingsDialog != null && settingsDialog.isShowing()) return;
@@ -497,7 +514,7 @@ public final class MainActivity extends Activity {
         connectionCard.setLayoutParams(left); controlsCard.setLayoutParams(right);
     }
     @Override protected void onResume() { super.onResume(); if (refreshTheme()) return; refreshSession(); if (pendingPrimaryGeneration >= 0 && coordinator.matches(pendingPrimaryGeneration)) openScreens(); checkUpdates(true); if (getIntent().getBooleanExtra("updates", false)) { getIntent().removeExtra("updates"); showUpdates(); } if (getIntent().getBooleanExtra("input_settings", false)) { getIntent().removeExtra("input_settings"); showInputSettings(); } if (!scanned && settings.discoverOnOpen()) { scanned = true; scan(); } }
-    @Override protected void onStop() { cancelMetadataProbe(false); updater.cancel(); cancelPairing(); if (diagnosticsDialog != null) diagnosticsDialog.dismiss(); if (discovery != null) { discovery.cancel(); discovery = null; scanButton.setEnabled(true); discoveryStatus.setText("Scan stopped. Choose Find nearby PCs to try again."); } super.onStop(); }
+    @Override protected void onStop() { if (overflowMenu != null) overflowMenu.dismiss(); cancelMetadataProbe(false); updater.cancel(); cancelPairing(); if (diagnosticsDialog != null) diagnosticsDialog.dismiss(); if (discovery != null) { discovery.cancel(); discovery = null; scanButton.setEnabled(true); discoveryStatus.setText("Scan stopped. Choose Find nearby PCs to try again."); } super.onStop(); }
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); }
-    @Override protected void onDestroy() { cancelMetadataProbe(false); cancelPairing(); if (updater != null) updater.close(); if (updateDialog != null) updateDialog.dismiss(); if (settingsDialog != null) { settingsDialog.setOnDismissListener(null); settingsDialog.dismiss(); } super.onDestroy(); }
+    @Override protected void onDestroy() { cancelMetadataProbe(false); cancelPairing(); if (updater != null) updater.close(); if (updateDialog != null) updateDialog.dismiss(); if (aboutDialog != null) aboutDialog.dismiss(); if (settingsDialog != null) { settingsDialog.setOnDismissListener(null); settingsDialog.dismiss(); } super.onDestroy(); }
 }

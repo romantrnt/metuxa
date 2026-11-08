@@ -9,14 +9,12 @@ The fake codec and AudioTrack enforce a single owning thread and reject work
 after release. Latches inject blocked configuration, recovery and PCM writes.
 Tests cover duplicate/interrupted release, pending recovery, late callbacks,
 partial initialization, release on the callback thread, audio input ownership,
-and waiting/cancelled monitor replacements. This detects ordering errors; it
-does not establish hardware MediaCodec, SurfaceFlinger or Quest behavior.
+and waiting/cancelled monitor replacements.
 
 Teardown deliberately waits on the background session worker until serialized
 codec cleanup completes. Activity stop never joins that worker. A truly wedged
 native codec can therefore keep the replacement waiting, rather than being
-unsafely reused after a timeout. Real Quest repeated recreation, multi-monitor
-decode, disconnect and injected decoder-error tests remain required.
+unsafely reused after a timeout.
 
 Socket shutdown regressions also verify that TLS close runs off the requesting
 thread, repeated stop closes once, background cleanup waits for completion, and
